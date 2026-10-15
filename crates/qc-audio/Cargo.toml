@@ -6,7 +6,9 @@ license.workspace = true
 
 [dependencies]
 qc-core = { path = "../qc-core" }
-symphonia = "0.5"
+# mp3 and m4a/aac are what people actually hand us for voice, and neither is in
+# symphonia's default feature set.
+symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4"] }
 rubato = "0.16"
 hound = "3.5"
 ebur128 = "0.1"

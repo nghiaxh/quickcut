@@ -2,6 +2,10 @@ use qc_core::CoreError;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+mod resample;
+
+use resample::resample;
+
 const SAMPLE_RATE: u32 = qc_core::SAMPLE_RATE;
 
 /// Errors owned by the audio stage. Probe and project errors stay in [`CoreError`].
@@ -320,67 +324,6 @@ fn decode_audio(path: &Path) -> Result<DecodedAudio, CoreError> {
         channels,
         samples,
     })
-}
-
-fn resample(
-    input: &[f32],
-    in_rate: usize,
-    in_channels: usize,
-    out_channels: usize,
-) -> Result<Vec<f32>, AudioError> {
-    if input.is_empty() {
-        return Ok(Vec::new());
-    }
-    let in_frames = input.len() / in_channels.max(1);
-    if in_rate == SAMPLE_RATE as usize {
-        // channel adjust only
-        if in_channels == out_channels {
-            return Ok(input.to_vec());
-        }
-        let mut out = Vec::with_capacity(in_frames * out_channels);
-        for f in 0..in_frames {
-            for c in 0..out_channels {
-                let src_c = c.min(in_channels.saturating_sub(1));
-                out.push(input[f * in_channels + src_c]);
-            }
-        }
-        return Ok(out);
-    }
-
-    // planar input
-    let mut planar = vec![Vec::with_capacity(in_frames); in_channels];
-    for f in 0..in_frames {
-        for c in 0..in_channels {
-            planar[c].push(input[f * in_channels + c] as f64);
-        }
-    }
-
-    use rubato::{FftFixedInOut, Resampler};
-    let mut resampler =
-        FftFixedInOut::<f64>::new(in_rate, SAMPLE_RATE as usize, in_frames, in_channels).map_err(
-            |e| AudioError::Resample {
-                reason: e.to_string(),
-            },
-        )?;
-    let out_planar = resampler
-        .process(&planar, None)
-        .map_err(|e| AudioError::Resample {
-            reason: e.to_string(),
-        })?;
-
-    let out_frames = if out_planar.is_empty() {
-        0
-    } else {
-        out_planar[0].len()
-    };
-    let mut out = vec![0f32; out_frames * out_channels];
-    for f in 0..out_frames {
-        for c in 0..out_channels {
-            let src_c = c.min(in_channels.saturating_sub(1));
-            out[f * out_channels + c] = out_planar[src_c][f] as f32;
-        }
-    }
-    Ok(out)
 }
 
 fn duck_envelope(voice: &[f32], total_frames: usize, channels: usize) -> Vec<f32> {
