@@ -1,19 +1,22 @@
 # QuickCut
 
-[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 [![Status](https://img.shields.io/badge/status-pre--alpha-red.svg)]()
 
-CLI-first Rust tool for rendering "react thread post" videos from a folder of images and voice audio. Desktop UI is intentionally deferred until the shared core and CLI are stable.
+CLI-first Rust tool for rendering "react thread post" videos from a folder of images and voice audio. The CLI is the product; the crates behind it are a library so a desktop app can ship later on the same core.
 
 ## Features
 
-- Convention-based input scanning: `01.png` pairs with `01.mp3`
-- TOML project files shared between CLI and future desktop app
-- Timeline solving from voice durations
-- Audio mixing: voice, SFX, BGM, ducking, loudness normalization
-- Frame rendering with backgrounds, scaling, auto-scroll, encodes to H.264 MP4 via FFmpeg
+- Convention-based input scanning: `01.png` pairs with `01.mp3`, `bgm.*` and `sfx/` are picked up automatically
+- TOML project files shared between CLI and desktop app
+- Timeline solved from voice durations, integer samples at 48 kHz
+- Audio mixing: voice, SFX, BGM looping, ducking, EBU R128 loudness normalization
+- Frame rendering: blurred or solid background, pop and slide animations, cross-fade between scenes, rounded corners, drop shadow
+- Auto-scroll for tall screenshots, timed to the voice track
+- H.264 MP4 through FFmpeg, with a fast `draft` preset for quick previews
+- Stable JSON progress output for tooling
 
 ## Quick Start
 
@@ -36,6 +39,27 @@ Inspect media metadata:
 quickcut probe ./my_video/01.png
 ```
 
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `init` | Create `project.toml` from an input folder |
+| `check` | Validate input and print the planned timeline |
+| `render` | Render an MP4 |
+| `probe` | Show audio/image metadata |
+
+Useful `render` flags: `--preset draft` for fast previews, `--range 1:3` to render a few scenes, `--size 1080x1350` to override the project, `--json-progress` for machine-readable progress, `-v`/`-vv` for more logs. `--fps` and `--size` fall back to `project.toml` when you leave them out.
+
+## Exit Codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Input or validation error |
+| `2` | Audio decode error |
+| `3` | FFmpeg error |
+| `4` | Other error |
+
 ## Build from source
 
 Requires the Rust toolchain and FFmpeg in `PATH`.
@@ -50,38 +74,38 @@ Binary output:
 target/release/quickcut
 ```
 
-## Commands
+Development checks:
 
-| Command | Purpose |
-| --- | --- |
-| `init` | Create `project.toml` from an input folder |
-| `check` | Validate input and print the planned timeline |
-| `render` | Render an MP4 |
-| `probe` | Show audio/image metadata |
+```sh
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
 
-## Exit Codes
+## Current limits
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Success |
-| `1` | Input or validation error |
-| `2` | Audio decode error |
-| `3` | FFmpeg error |
-| `4` | Other error |
+- Scene images must be at least 480 px wide; `check` warns, `render` refuses
+- `background.kind` supports `solid` and `blur_from_image`
+- Audio loudness uses sample-peak limiting, not true-peak with lookahead
 
 ## Project Layout
 
 ```text
 quickcut/
   crates/
-    qc-core/     Shared model, parser, timeline solver
+    qc-core/     Shared model, parser, timeline solver, probing
     qc-audio/    Decode, mix, duck, loudness
     qc-render/   Frame compositor
     qc-export/   FFmpeg pipe export
     qc-cli/      Command-line interface
+  apps/
+    desktop/     Experimental egui app (separate workspace)
+  examples/      Runnable sample project
   .github/       CI workflows
 ```
 
+`apps/desktop` is its own Cargo workspace, so root commands and CI do not build it.
+
 ## Status
 
-QuickCut is under active development. The core API is designed as a reusable library for the planned desktop application.
+QuickCut is under active development and pre-alpha. The core API is treated as the stable contract that the desktop app will depend on; expect breaking changes to `Project` fields and the progress JSON until the schema settles.
