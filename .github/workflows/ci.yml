@@ -19,12 +19,22 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # Sample media is not committed, so the smoke test builds its own fixture.
+      # If this ever passes without running a real render it is worthless.
       - name: smoke test a real render
-        run: cargo run --release -p qc-cli -- render examples/basic --preset draft -o render-check.mp4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-fixture
+          ffmpeg -v error -y -f lavfi -i "color=c=0xf5f3f0:s=1080x1920" -frames:v 1 .ci-fixture/01.png
+          ffmpeg -v error -y -f lavfi -i "sine=frequency=440:duration=1" -ar 48000 -ac 1 .ci-fixture/01.wav
+          printf 'schema_version = 1\n\n[[scene]]\nimage = "01.png"\nvoice = "01.wav"\n' > .ci-fixture/project.toml
+          cargo run --release -p qc-cli -- render .ci-fixture --preset draft -o .ci-fixture/render-check.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 .ci-fixture/render-check.mp4
       - uses: actions/upload-artifact@v4
         with:
           name: render-check-${{ matrix.os }}
-          path: render-check.mp4
+          path: .ci-fixture/render-check.mp4
           if-no-files-found: error
 
   desktop:
