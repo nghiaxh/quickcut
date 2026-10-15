@@ -31,7 +31,7 @@ Rust workspace implementing a CLI-first video renderer for "react thread post" p
 
 ## Performance
 
-- Do not re-measure before profiling. Render ablation on a 13 s project showed the shadow overlay and the animation resample, not the background copy, dominated the frame cost.
+- Profile before re-measuring. Render ablation on a 13 s project showed the shadow overlay and the animation resample, not the background copy, dominated the frame cost.
 - The frame loop renders in parallel rounds sized by both the worker count and a 128 MB in-flight cap. Frames must still reach ffmpeg in order; `--threads` sizes the rayon pool and has to be called before any other rayon work.
 - Output must stay byte for byte deterministic for the same input regardless of thread count. Verify with a hash comparison after touching the frame loop.
 
@@ -52,9 +52,9 @@ Exit codes: `0` success, `1` input error, `2` decode error, `3` FFmpeg error, `4
 - Timeline times use integer `Samples` at 48 kHz; do not introduce float seconds accumulation. Voice durations are converted to 48 kHz when probed, so a 44.1 kHz file does not stretch the timeline.
 - `render` writes `mix.wav` next to the output and deletes it unless `--keep-temp`.
 - The limiter trims the whole mix to `true_peak_db` measured as EBU R128 true peak. It is not a look-ahead dynamics processor, so quiet passages are not lifted.
-- `qc-core` and `qc-audio` must request the same symphonia features. They differ in what `check` accepts and what `render` can mix, which is worse than rejecting the format outright.
+- `qc-core` and `qc-audio` must request the same symphonia features. Otherwise `check` accepts formats that `render` cannot mix, which is worse than rejecting the format outright.
 - Resampling to 48 kHz goes through `FftFixedInOut` in fixed chunks with a partial flush, and the half-filter-length delay is dropped. Do not feed it a whole-file buffer: it rounds the chunk size up and then rejects the input.
 - Images narrower than `qc_core::MIN_IMAGE_WIDTH` (480) are warned about by `check` and refused by `render`.
 - `background.kind` supports `solid` and `blur_from_image`; anything else fails with `NotImplemented`.
-- Progress JSON (`--json-progress`) format is part of the CLI contract and must remain stable: keys `stage`, `frame`, `total`, `eta_sec`, stages `probe`, `audio`, `render`, `encode`, `done`.
+- The `--json-progress` output is part of the CLI contract and must remain stable: keys `stage`, `frame`, `total`, `eta_sec`; stages `probe`, `audio`, `render`, `encode`, `done`.
 - `qc-export` never prints; it hands `Progress` to a callback and the CLI picks JSON lines or a progress bar.

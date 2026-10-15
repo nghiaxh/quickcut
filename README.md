@@ -5,7 +5,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 [![Status](https://img.shields.io/badge/status-pre--alpha-red.svg)]()
 
-CLI-first Rust tool for rendering "react thread post" videos from a folder of images and voice audio. The CLI is the product; the crates behind it are a library so a desktop app can ship later on the same core.
+A CLI-first Rust renderer that turns a folder of images and voice audio into a "react thread post" video. The CLI is the product; the crates behind it form a reusable library, so a desktop app can be built on the same core.
 
 ## Features
 
@@ -27,7 +27,7 @@ quickcut check ./my_video
 quickcut render ./my_video -o out.mp4
 ```
 
-No sample media is committed, so make your own in one step:
+The repository ships no sample media. Create a minimal project:
 
 ```sh
 mkdir my_video && cp a-screenshot.png my_video/01.png && cp my-voice.mp3 my_video/01.mp3
@@ -51,7 +51,7 @@ quickcut probe ./my_video/01.png
 | `render` | Render an MP4 |
 | `probe` | Show audio/image metadata |
 
-Useful `render` flags: `--preset draft` for fast previews, `--range 1:3` to render a few scenes, `--size 1080x1350` to override the project, `--json-progress` for machine-readable progress, `-v`/`-vv` for more logs. `--fps` and `--size` fall back to `project.toml` when you leave them out.
+Useful `render` flags: `--preset draft` for fast previews, `--range 1:3` to render a subset of scenes, `--size 1080x1350` to override the project, `--json-progress` for machine-readable progress, and `-v`/`-vv` for more verbose logs. `--fps` and `--size` fall back to `project.toml` when omitted.
 
 ## Exit Codes
 
@@ -65,7 +65,7 @@ Useful `render` flags: `--preset draft` for fast previews, `--range 1:3` to rend
 
 ## Build from source
 
-Requires the Rust toolchain (pinned in `rust-toolchain.toml`) and FFmpeg in `PATH`. FFmpeg is not bundled: libx264 is GPL, so shipping it would put GPL obligations on anyone who downloads QuickCut.
+Requires the Rust toolchain (pinned in `rust-toolchain.toml`) and FFmpeg on `PATH`. FFmpeg is not bundled: libx264 is GPL-licensed, so distributing it would place GPL obligations on anyone who downloads QuickCut.
 
 ```sh
 cargo build -p qc-cli --release
@@ -89,21 +89,21 @@ cargo test --workspace
 
 ## Performance
 
-Measured on an 8-core machine, 1080x1920 at 30 fps:
+Measured on an 8-core machine at 1080x1920, 30 fps:
 
 | Workload | Before | Now |
 | --- | --- | --- |
 | 1 minute of video, mixed-length scenes | ~3.7 min | ~1.2 min |
 
-Three things get it there: scenes whose animation has finished are composited once and reused, the frame loop writes into a reused buffer instead of allocating per frame, and frames render in parallel while still reaching FFmpeg in order. Output is byte for byte identical no matter how many threads you use.
+Three optimizations account for the gain: settled scenes are composited once and cached, the frame loop renders into a reused buffer instead of allocating per frame, and frames render in parallel while still reaching FFmpeg in order. Output is byte-for-byte identical regardless of thread count.
 
-Use `--threads N` to cap the render pool. On a busy machine 4 threads is often faster than 8, because FFmpeg's encoder wants cores too.
+Use `--threads N` to cap the render pool. On a loaded machine, four threads often outperform eight because the FFmpeg encoder also needs cores.
 
 ## Current limits
 
 - Scene images must be at least 480 px wide; `check` warns, `render` refuses
 - `background.kind` supports `solid` and `blur_from_image`
-- The peak limiter trims the whole mix to the true-peak ceiling rather than running look-ahead gain reduction, so quiet passages are not lifted
+- The peak limiter trims the entire mix to the true-peak ceiling instead of applying look-ahead gain reduction, so quiet passages are not lifted
 
 ## Project Layout
 
