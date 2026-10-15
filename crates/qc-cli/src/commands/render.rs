@@ -51,6 +51,14 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         return Err(ArgError::Preset(args.preset.clone()).into());
     }
 
+    // Must happen before any rayon work: the global pool can only be sized once,
+    // and probing scenes is already parallel.
+    if let Some(n) = args.threads {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global();
+    }
+
     let probes = util::probe_scenes(&project, &base).context("probing scene media")?;
     let inputs: Vec<SceneInputs> = probes.iter().map(|p| p.inputs.clone()).collect();
     let timeline = qc_core::solve_timeline(&project, &inputs).context("solving timeline")?;
@@ -60,12 +68,6 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         None => (project.output.width, project.output.height),
     };
     let fps = args.fps.unwrap_or(project.output.fps);
-
-    if let Some(n) = args.threads {
-        let _ = rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .build_global();
-    }
 
     let range = match &args.range {
         Some(r) => Some(parse_range(r, &timeline, fps)?),

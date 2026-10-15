@@ -1,6 +1,7 @@
 use qc_audio::AudioError;
 use qc_core::{Progress, Stage};
 use qc_render::RenderError;
+use rayon::prelude::*;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -58,6 +59,14 @@ fn eta_sec(done: u64, total: u64, started: Instant) -> u64 {
         return 0;
     }
     (started.elapsed().as_secs_f64() * (total - done) as f64 / done as f64) as u64
+}
+
+/// How many frames render at once. At 1080p one frame is 8 MB, so the round is
+/// capped by memory as well as by the worker count.
+fn block_size(width: u32, height: u32) -> usize {
+    let frame_bytes = (width as usize * height as usize * 4).max(1);
+    let memory_cap = (128 * 1024 * 1024) / frame_bytes;
+    memory_cap.clamp(2, rayon::current_num_threads().max(2))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -181,28 +190,49 @@ pub fn export_video(
     let started = Instant::now();
     let mut produced = 0u64;
     let mut pipe_closed = false;
-    for frame_index in start..end {
-        if frame_index >= full_total {
-            break;
-        }
-        let rgba =
-            qc_render::render_frame_rgba(project, base, timeline, frame_index, fps, out_w, out_h)
+    let frame_bytes = out_w as usize * out_h as usize * 4;
+    let frames: Vec<u64> = (start..end).take_while(|f| *f < full_total).collect();
+    let block = block_size(out_w, out_h);
+
+    'rounds: for round in frames.chunks(block) {
+        // Frames render in parallel, then go to ffmpeg strictly in order so the
+        // output stays byte for byte the same as a single threaded render.
+        let rendered: Result<Vec<Vec<u8>>, ExportError> = round
+            .par_iter()
+            .map(|&frame_index| {
+                let mut rgba = Vec::with_capacity(frame_bytes);
+                qc_render::render_frame_into(
+                    &mut rgba,
+                    project,
+                    base,
+                    timeline,
+                    frame_index,
+                    fps,
+                    out_w,
+                    out_h,
+                )
                 .map_err(|cause| ExportError::Frame {
-                frame: frame_index,
-                cause,
-            })?;
-        if stdin.write_all(&rgba).is_err() {
-            pipe_closed = true;
-            break;
-        }
-        produced += 1;
-        if produced.is_multiple_of(30) || produced == total_frames {
-            on_progress(Progress {
-                stage: Stage::Render,
-                frame: produced,
-                total: total_frames,
-                eta_sec: eta_sec(produced, total_frames, started),
-            });
+                    frame: frame_index,
+                    cause,
+                })?;
+                Ok(rgba)
+            })
+            .collect();
+
+        for rgba in rendered? {
+            if stdin.write_all(&rgba).is_err() {
+                pipe_closed = true;
+                break 'rounds;
+            }
+            produced += 1;
+            if produced.is_multiple_of(30) || produced == total_frames {
+                on_progress(Progress {
+                    stage: Stage::Render,
+                    frame: produced,
+                    total: total_frames,
+                    eta_sec: eta_sec(produced, total_frames, started),
+                });
+            }
         }
     }
 

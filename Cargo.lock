@@ -1036,6 +1036,7 @@ dependencies = [
  "qc-audio",
  "qc-core",
  "qc-render",
+ "rayon",
  "thiserror",
 ]
 

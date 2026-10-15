@@ -8,4 +8,5 @@ license.workspace = true
 qc-core = { path = "../qc-core" }
 qc-render = { path = "../qc-render" }
 qc-audio = { path = "../qc-audio" }
+rayon = "1.10"
 thiserror = "2"
