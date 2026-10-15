@@ -9,8 +9,8 @@ Rust workspace implementing a CLI-first video renderer for "react thread post" p
 - Format check: `cargo fmt --check`
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Tests: `cargo test --workspace`
-- `apps/desktop` is its own workspace: run cargo from inside it, root commands do not build it and CI does not test it
-- Rust edition 2021, toolchain not pinned (CI uses stable). FFmpeg must be in `PATH` for `render`.
+- `apps/desktop` is its own workspace: run cargo from inside it, root commands do not see it and CI lints it in a separate job
+- Rust edition 2021, toolchain pinned in `rust-toolchain.toml`. FFmpeg must be in `PATH` for `render`.
 
 ## Workspace boundaries
 
@@ -52,6 +52,8 @@ Exit codes: `0` success, `1` input error, `2` decode error, `3` FFmpeg error, `4
 - Timeline times use integer `Samples` at 48 kHz; do not introduce float seconds accumulation. Voice durations are converted to 48 kHz when probed, so a 44.1 kHz file does not stretch the timeline.
 - `render` writes `mix.wav` next to the output and deletes it unless `--keep-temp`.
 - The limiter trims the whole mix to `true_peak_db` measured as EBU R128 true peak. It is not a look-ahead dynamics processor, so quiet passages are not lifted.
+- `qc-core` and `qc-audio` must request the same symphonia features. They differ in what `check` accepts and what `render` can mix, which is worse than rejecting the format outright.
+- Resampling to 48 kHz goes through `FftFixedInOut` in fixed chunks with a partial flush, and the half-filter-length delay is dropped. Do not feed it a whole-file buffer: it rounds the chunk size up and then rejects the input.
 - Images narrower than `qc_core::MIN_IMAGE_WIDTH` (480) are warned about by `check` and refused by `render`.
 - `background.kind` supports `solid` and `blur_from_image`; anything else fails with `NotImplemented`.
 - Progress JSON (`--json-progress`) format is part of the CLI contract and must remain stable: keys `stage`, `frame`, `total`, `eta_sec`, stages `probe`, `audio`, `render`, `encode`, `done`.

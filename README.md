@@ -10,6 +10,7 @@ CLI-first Rust tool for rendering "react thread post" videos from a folder of im
 ## Features
 
 - Convention-based input scanning: `01.png` pairs with `01.mp3`, `bgm.*` and `sfx/` are picked up automatically
+- Voice, SFX and BGM in mp3, wav, m4a or ogg, at any sample rate; everything is resampled to 48 kHz
 - TOML project files shared between CLI and desktop app
 - Timeline solved from voice durations, integer samples at 48 kHz
 - Audio mixing: voice, SFX, BGM looping, ducking, EBU R128 loudness normalization
@@ -62,7 +63,7 @@ Useful `render` flags: `--preset draft` for fast previews, `--range 1:3` to rend
 
 ## Build from source
 
-Requires the Rust toolchain and FFmpeg in `PATH`.
+Requires the Rust toolchain (pinned in `rust-toolchain.toml`) and FFmpeg in `PATH`. FFmpeg is not bundled: libx264 is GPL, so shipping it would put GPL obligations on anyone who downloads QuickCut.
 
 ```sh
 cargo build -p qc-cli --release
@@ -73,6 +74,8 @@ Binary output:
 ```text
 target/release/quickcut
 ```
+
+Prebuilt binaries for Linux, macOS (Intel and Apple Silicon) and Windows are attached to each GitHub release.
 
 Development checks:
 
