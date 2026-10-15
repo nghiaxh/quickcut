@@ -10,6 +10,39 @@ pub struct SceneSpan {
     pub voice_end: Samples,
 }
 
+/// How a scene image maps into the frame once scaled to the available width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    /// Scaled image is shorter than the frame, so it is centered vertically.
+    Centered,
+    /// Scaled image is taller than the frame, so it scrolls by `max_offset_px`.
+    Scroll { max_offset_px: u32 },
+}
+
+/// Scale a scene image to `frame_width - 2 * margin_x` and report how it fits.
+/// The renderer calls this with the size it is actually rendering, so `--preset draft`
+/// and `--size` stay correct; `check` calls it with the project's canonical output size.
+pub fn fit_image(
+    image_width: u32,
+    image_height: u32,
+    frame_width: u32,
+    frame_height: u32,
+    margin_x: u32,
+) -> Fit {
+    if image_width == 0 {
+        return Fit::Centered;
+    }
+    let avail = frame_width.saturating_sub(margin_x * 2);
+    let scaled_h = (image_height as u64 * avail as u64 / image_width as u64) as u32;
+    if scaled_h > frame_height {
+        Fit::Scroll {
+            max_offset_px: scaled_h - frame_height,
+        }
+    } else {
+        Fit::Centered
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AudioCue {
     pub scene: usize,
@@ -137,5 +170,26 @@ mod tests {
         ];
         let tl = solve(&project, &inputs).unwrap();
         assert!(tl.scenes[1].start.0 < tl.scenes[0].end.0);
+    }
+
+    #[test]
+    fn short_image_is_centered() {
+        // 960x640 scaled to 960 wide is shorter than the 1920 frame.
+        assert_eq!(fit_image(960, 640, 1080, 1920, 60), Fit::Centered);
+    }
+
+    #[test]
+    fn tall_image_scrolls_by_the_overflow() {
+        // 960x2400 scaled to 960 wide overflows the 1920 frame by 480 px.
+        assert_eq!(
+            fit_image(960, 2400, 1080, 1920, 60),
+            Fit::Scroll { max_offset_px: 480 }
+        );
+    }
+
+    #[test]
+    fn fit_follows_the_frame_it_renders_into() {
+        // Same image, smaller frame: no longer a scroll.
+        assert_eq!(fit_image(960, 2400, 360, 640, 60), Fit::Centered);
     }
 }

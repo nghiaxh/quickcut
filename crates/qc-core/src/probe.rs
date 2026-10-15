@@ -23,6 +23,35 @@ pub struct SceneInputs {
     pub image_height: u32,
 }
 
+/// What `check` and `render` both need to know about one scene's media.
+#[derive(Debug, Clone)]
+pub struct SceneProbe {
+    pub inputs: SceneInputs,
+    pub voice_rms_db: Option<f64>,
+}
+
+/// Narrower than [`crate::MIN_IMAGE_WIDTH`] is warned about by `check` and refused by `render`.
+pub const MIN_IMAGE_WIDTH: u32 = 480;
+
+/// Probe one scene's image and optional voice track. Paths resolve from the project file.
+pub fn probe_scene(base: &Path, scene: &crate::Scene) -> Result<SceneProbe, CoreError> {
+    let image = probe_image(&base.join(&scene.image))?;
+    let voice = match &scene.voice {
+        Some(rel) => Some(probe_audio(&base.join(rel))?),
+        None => None,
+    };
+    Ok(SceneProbe {
+        inputs: SceneInputs {
+            voice_samples: voice
+                .as_ref()
+                .map(|v| crate::Samples::from_secs(v.duration_secs).0),
+            image_width: image.width,
+            image_height: image.height,
+        },
+        voice_rms_db: voice.as_ref().map(|v| v.rms_db),
+    })
+}
+
 pub fn probe_image(path: &Path) -> Result<ImageInfo, CoreError> {
     let (width, height) = image::image_dimensions(path).map_err(|e| CoreError::MissingFile {
         path: path.display().to_string(),
