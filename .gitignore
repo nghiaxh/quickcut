@@ -1,6 +1,11 @@
 # Rust build artifacts
 target/
 
+# Node build artifacts
+node_modules/
+web/dist/
+web/.astro/
+
 # Mixed OS line endings
 *.orig
 *.rej

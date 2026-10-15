@@ -8,15 +8,31 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - name: install ffmpeg
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ffmpeg; fi
           if [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg; fi
           if [ "$RUNNER_OS" = "Windows" ]; then choco install ffmpeg; fi
         shell: bash
+      # --all-targets matters: without it clippy skips tests and benches, which is
+      # where most of the code lives once the suite grows.
       - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: smoke test a real render
+        run: cargo run --release -p qc-cli -- render examples/basic --preset draft -o render-check.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-check-${{ matrix.os }}
+          path: render-check.mp4
+          if-no-files-found: error
+
+  desktop:
+    # Separate Cargo workspace, so root commands never see it.
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo check --workspace --all-targets -- -D warnings
