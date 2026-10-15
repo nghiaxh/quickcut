@@ -1,0 +1,11 @@
+[package]
+name = "qc-export"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qc-core = { path = "../qc-core" }
+qc-render = { path = "../qc-render" }
+qc-audio = { path = "../qc-audio" }
+thiserror = "2"

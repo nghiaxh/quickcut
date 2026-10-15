@@ -1,0 +1,22 @@
+# Rust build artifacts
+/target/
+
+# Mixed OS line endings
+*.orig
+*.rej
+
+# Editor
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Local outputs and temp media
+*.mp4
+*.wav
+!examples/basic/*.wav
+!examples/basic/sfx/*.wav
+*.tmp
+.quickcut/

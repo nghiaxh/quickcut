@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "quickcut-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "quickcut-desktop"
+path = "src/main.rs"
+
+[dependencies]
+qc-core = { path = "../../crates/qc-core" }
+qc-render = { path = "../../crates/qc-render" }
+qc-export = { path = "../../crates/qc-export" }
+eframe = "0.29"
+egui = "0.29"
+rfd = "0.15"

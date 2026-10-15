@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/qc-core",
+    "crates/qc-audio",
+    "crates/qc-render",
+    "crates/qc-export",
+    "crates/qc-cli",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
