@@ -11,3 +11,6 @@ rubato = "0.16"
 hound = "3.5"
 ebur128 = "0.1"
 thiserror = "2"
+
+[dev-dependencies]
+hound = "3.5"

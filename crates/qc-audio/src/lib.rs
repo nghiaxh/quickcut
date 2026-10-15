@@ -183,11 +183,14 @@ pub fn mix_project(
         }
     }
 
-    // Limiter (sample peak fallback)
-    let peak_target = db_to_amp(project.audio.master.true_peak_db);
-    let peak = master.iter().cloned().fold(0.0f32, f32::max);
-    if peak > peak_target && peak > 0.0 {
-        let gain = peak_target / peak;
+    // Limiter. EBU R128 true peak, not sample peak: inter-sample overshoot on
+    // bright voice is what actually clips in players. This trims the whole mix
+    // rather than running look-ahead gain reduction, which keeps the result
+    // predictable at the cost of not lifting quiet passages.
+    let peak_target = db_to_amp(project.audio.master.true_peak_db) as f64;
+    let peak = measure_true_peak(&master, channels, SAMPLE_RATE);
+    if peak.is_finite() && peak > peak_target && peak > 0.0 {
+        let gain = (peak_target / peak) as f32;
         for s in &mut master {
             *s *= gain;
         }
@@ -432,6 +435,19 @@ fn measure_lufs(master: &[f32], channels: usize, sample_rate: u32) -> f64 {
         return f64::NAN;
     }
     ebur.loudness_global().unwrap_or(f64::NAN)
+}
+
+fn measure_true_peak(master: &[f32], channels: usize, sample_rate: u32) -> f64 {
+    use ebur128::{EbuR128, Mode};
+    let Ok(mut ebur) = EbuR128::new(channels as u32, sample_rate, Mode::TRUE_PEAK) else {
+        return f64::NAN;
+    };
+    if ebur.add_frames_f32(master).is_err() {
+        return f64::NAN;
+    }
+    (0..channels)
+        .filter_map(|c| ebur.true_peak(c as u32).ok())
+        .fold(0.0f64, f64::max)
 }
 
 fn write_wav(
