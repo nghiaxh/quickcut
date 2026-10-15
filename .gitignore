@@ -1,5 +1,5 @@
 # Rust build artifacts
-/target/
+target/
 
 # Mixed OS line endings
 *.orig
