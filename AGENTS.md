@@ -16,8 +16,8 @@ Rust workspace implementing a CLI-first video renderer for "react thread post" p
 
 - `qc-core`: time model (`Samples`), `Project`, TOML parsing/validation, timeline solver, file probing, `Fit`/`fit_image`, `Progress`/`Stage`
 - `qc-audio`: decode/resample/mix/duck WAV generation
-- `qc-render`: frame composition built on the `image` crate (not tiny-skia): animation, cross-fade, rounded corners, shadow
-- `qc-export`: FFmpeg pipe orchestration, owns the frame loop and reports progress through a callback
+- `qc-render`: frame composition built on the `image` crate (not tiny-skia): animation, cross-fade, rounded corners, shadow. `render_frame_into` writes into a caller-owned buffer and uses per-thread scratch, so the frame loop allocates nothing. Scenes whose animation has settled are composited once and cached.
+- `qc-export`: FFmpeg pipe orchestration, owns the frame loop, reports progress through a callback, and renders frames in parallel rounds that reach ffmpeg in strict order
 - `qc-cli`: clap entrypoint and commands
 - `apps/desktop`: egui desktop app using the same crates
 - Dependency direction: `cli, desktop -> export -> render,audio -> core`
@@ -28,6 +28,12 @@ Rust workspace implementing a CLI-first video renderer for "react thread post" p
 - Every error type exposes `exit_code()`; `qc-cli` downcasts from `anyhow::Error` to map to the contract below
 - Libraries use `thiserror`; only `qc-cli` uses `anyhow`
 - An error that already embeds an inner message in its `Display` must not also mark that field as `source`, or anyhow prints the message twice
+
+## Performance
+
+- Do not re-measure before profiling. Render ablation on `examples/basic` showed the shadow overlay and the animation resample, not the background copy, dominated the frame cost.
+- The frame loop renders in parallel rounds sized by both the worker count and a 128 MB in-flight cap. Frames must still reach ffmpeg in order; `--threads` sizes the rayon pool and has to be called before any other rayon work.
+- Output must stay byte for byte deterministic for the same input regardless of thread count. Verify with a hash comparison after touching the frame loop.
 
 ## Commands
 
@@ -45,6 +51,7 @@ Exit codes: `0` success, `1` input error, `2` decode error, `3` FFmpeg error, `4
 - `--fps` and `--size` fall back to `project.toml` when omitted. Malformed values are errors, never silently corrected.
 - Timeline times use integer `Samples` at 48 kHz; do not introduce float seconds accumulation. Voice durations are converted to 48 kHz when probed, so a 44.1 kHz file does not stretch the timeline.
 - `render` writes `mix.wav` next to the output and deletes it unless `--keep-temp`.
+- The limiter trims the whole mix to `true_peak_db` measured as EBU R128 true peak. It is not a look-ahead dynamics processor, so quiet passages are not lifted.
 - Images narrower than `qc_core::MIN_IMAGE_WIDTH` (480) are warned about by `check` and refused by `render`.
 - `background.kind` supports `solid` and `blur_from_image`; anything else fails with `NotImplemented`.
 - Progress JSON (`--json-progress`) format is part of the CLI contract and must remain stable: keys `stage`, `frame`, `total`, `eta_sec`, stages `probe`, `audio`, `render`, `encode`, `done`.

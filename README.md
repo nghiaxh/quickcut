@@ -82,11 +82,23 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+## Performance
+
+Measured on an 8-core machine, 1080x1920 at 30 fps:
+
+| Workload | Before | Now |
+| --- | --- | --- |
+| 1 minute of video, mixed-length scenes | ~3.7 min | ~1.2 min |
+
+Three things get it there: scenes whose animation has finished are composited once and reused, the frame loop writes into a reused buffer instead of allocating per frame, and frames render in parallel while still reaching FFmpeg in order. Output is byte for byte identical no matter how many threads you use.
+
+Use `--threads N` to cap the render pool. On a busy machine 4 threads is often faster than 8, because FFmpeg's encoder wants cores too.
+
 ## Current limits
 
 - Scene images must be at least 480 px wide; `check` warns, `render` refuses
 - `background.kind` supports `solid` and `blur_from_image`
-- Audio loudness uses sample-peak limiting, not true-peak with lookahead
+- The peak limiter trims the whole mix to the true-peak ceiling rather than running look-ahead gain reduction, so quiet passages are not lifted
 
 ## Project Layout
 
