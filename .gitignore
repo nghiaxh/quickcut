@@ -6,6 +6,10 @@ node_modules/
 web/dist/
 web/.astro/
 
+# Sample media is generated, not authored. tools/make-demo.ps1 rebuilds it.
+examples/
+assets/
+
 # Mixed OS line endings
 *.orig
 *.rej
@@ -21,7 +25,6 @@ Thumbs.db
 # Local outputs and temp media
 *.mp4
 *.wav
-!examples/basic/*.wav
-!examples/basic/sfx/*.wav
 *.tmp
 .quickcut/
+.ci-fixture/
