@@ -1,5 +1,4 @@
 use eframe::egui;
-use qc_core::CoreError;
 use std::path::PathBuf;
 
 struct DesktopApp {
@@ -35,32 +34,18 @@ impl DesktopApp {
                     .parent()
                     .unwrap_or_else(|| std::path::Path::new("."))
                     .to_path_buf();
-                let mut inputs = Vec::new();
-                for scene in &project.scenes {
-                    let img = match qc_core::probe_image(&base.join(&scene.image)) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            self.status = e.to_string();
-                            return;
-                        }
-                    };
-                    let voice_samples = if let Some(v) = &scene.voice {
-                        match qc_core::probe_audio(&base.join(v)) {
-                            Ok(a) => Some(a.duration_samples),
-                            Err(e) => {
-                                self.status = e.to_string();
-                                return;
-                            }
-                        }
-                    } else {
-                        None
-                    };
-                    inputs.push(qc_core::SceneInputs {
-                        voice_samples,
-                        image_width: img.width,
-                        image_height: img.height,
-                    });
-                }
+                let inputs: Vec<qc_core::SceneInputs> = match project
+                    .scenes
+                    .iter()
+                    .map(|scene| qc_core::probe_scene(&base, scene).map(|probe| probe.inputs))
+                    .collect()
+                {
+                    Ok(inputs) => inputs,
+                    Err(e) => {
+                        self.status = e.to_string();
+                        return;
+                    }
+                };
                 match qc_core::solve_timeline(&project, &inputs) {
                     Ok(timeline) => {
                         self.status = format!("Loaded {} scenes", project.scenes.len());
@@ -135,8 +120,19 @@ impl eframe::App for DesktopApp {
                     {
                         let out = base.join("out.mp4");
                         match qc_export::export_video(
-                            project, base, timeline, &out, 30, 1080, 1920, "final", None, None,
-                            false, true, false,
+                            project,
+                            base,
+                            timeline,
+                            &out,
+                            30,
+                            1080,
+                            1920,
+                            "final",
+                            None,
+                            None,
+                            false,
+                            true,
+                            &mut |_| {},
                         ) {
                             Ok(()) => self.status = format!("Exported {}", out.display()),
                             Err(e) => self.status = e.to_string(),
@@ -148,7 +144,7 @@ impl eframe::App for DesktopApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(tex) = &self.preview_texture {
-                let img = egui::Image::from_texture(tex).fit_to_original_size();
+                let img = egui::Image::from_texture(tex).fit_to_original_size(1.0);
                 ui.add(img);
             } else {
                 ui.label("Preview area");
