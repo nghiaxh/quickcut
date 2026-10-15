@@ -27,11 +27,13 @@ quickcut check ./my_video
 quickcut render ./my_video -o out.mp4
 ```
 
-Run the bundled short sample:
+No sample media is committed, so make your own in one step:
 
 ```sh
-quickcut check examples/basic
-quickcut render examples/basic -o examples/basic/out.mp4
+mkdir my_video && cp a-screenshot.png my_video/01.png && cp my-voice.mp3 my_video/01.mp3
+quickcut init ./my_video
+quickcut check ./my_video
+quickcut render ./my_video -o out.mp4
 ```
 
 Inspect media metadata:
@@ -115,11 +117,13 @@ quickcut/
     qc-cli/      Command-line interface
   apps/
     desktop/     Experimental egui app (separate workspace)
-  examples/      Runnable sample project
+  tools/         Scripts for generating sample media
   .github/       CI workflows
 ```
 
 `apps/desktop` is its own Cargo workspace, so root commands and CI do not build it.
+
+`examples/` and `assets/` are git ignored. Sample media is generated rather than committed, and `tools/make-demo.ps1` rebuilds it.
 
 ## Status
 

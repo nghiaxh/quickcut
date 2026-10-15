@@ -31,7 +31,7 @@ Rust workspace implementing a CLI-first video renderer for "react thread post" p
 
 ## Performance
 
-- Do not re-measure before profiling. Render ablation on `examples/basic` showed the shadow overlay and the animation resample, not the background copy, dominated the frame cost.
+- Do not re-measure before profiling. Render ablation on a 13 s project showed the shadow overlay and the animation resample, not the background copy, dominated the frame cost.
 - The frame loop renders in parallel rounds sized by both the worker count and a 128 MB in-flight cap. Frames must still reach ffmpeg in order; `--threads` sizes the rayon pool and has to be called before any other rayon work.
 - Output must stay byte for byte deterministic for the same input regardless of thread count. Verify with a hash comparison after touching the frame loop.
 
