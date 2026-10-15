@@ -1,7 +1,44 @@
-use qc_core::CoreError;
+use qc_audio::AudioError;
+use qc_core::{Progress, Stage};
+use qc_render::RenderError;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::Instant;
+use thiserror::Error;
+
+/// Errors owned by the export stage.
+#[derive(Debug, Error)]
+pub enum ExportError {
+    #[error("ffmpeg not found or not runnable at {0}; install FFmpeg or pass --ffmpeg")]
+    Missing(String),
+    #[error("ffmpeg failed:\n{log}")]
+    Ffmpeg { log: String },
+    // Inner errors are written into the message, not chained, so printing the
+    // anyhow chain does not repeat them.
+    #[error("cannot start ffmpeg: {0}")]
+    Spawn(std::io::Error),
+    #[error("ffmpeg stdin is unavailable")]
+    NoStdin,
+    #[error("cannot wait for ffmpeg: {0}")]
+    Wait(std::io::Error),
+    #[error("frame {frame} failed to render: {cause}")]
+    Frame { frame: u64, cause: RenderError },
+    #[error(transparent)]
+    Audio(#[from] AudioError),
+}
+
+impl ExportError {
+    /// Process exit code. Part of the CLI contract.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            ExportError::Missing(_) | ExportError::Ffmpeg { .. } => 3,
+            ExportError::Frame { cause, .. } => cause.exit_code(),
+            ExportError::Audio(e) => e.exit_code(),
+            ExportError::Spawn(_) | ExportError::NoStdin | ExportError::Wait(_) => 4,
+        }
+    }
+}
 
 struct TempCleanup {
     path: std::path::PathBuf,
@@ -16,24 +53,11 @@ impl Drop for TempCleanup {
     }
 }
 
-fn write_progress_bar(produced: u64, total: u64) {
-    const BAR_WIDTH: usize = 24;
-    let pct = produced
-        .checked_mul(100)
-        .and_then(|scaled| scaled.checked_div(total))
-        .unwrap_or(100)
-        .min(100);
-    let filled = ((BAR_WIDTH * pct as usize) / 100).min(BAR_WIDTH);
-    let _ = write!(
-        std::io::stderr(),
-        "\rrendering: [{}{}] {:>3}% ({}/{})",
-        "#".repeat(filled),
-        "-".repeat(BAR_WIDTH - filled),
-        pct,
-        produced,
-        total
-    );
-    let _ = std::io::stderr().flush();
+fn eta_sec(done: u64, total: u64, started: Instant) -> u64 {
+    if done == 0 || total <= done {
+        return 0;
+    }
+    (started.elapsed().as_secs_f64() * (total - done) as f64 / done as f64) as u64
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -50,18 +74,29 @@ pub fn export_video(
     range: Option<(u64, u64)>,
     no_audio_norm: bool,
     keep_temp: bool,
-    json_progress: bool,
-) -> Result<(), CoreError> {
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<(), ExportError> {
     let (out_w, out_h, ffmpeg_preset, crf) = match preset {
         "draft" => (360u32, 640u32, "ultrafast", 28i32),
         _ => (width, height, "medium", 18i32),
     };
 
-    if json_progress {
-        println!(r#"{{"stage":"probe","frame":0,"total":0,"eta_sec":0}}"#);
-    } else {
-        let _ = writeln!(std::io::stderr(), "probe...");
-    }
+    let full_total = timeline.total.to_frame(fps);
+    let (start, end) = range.unwrap_or((0, full_total));
+    let total_frames = end.saturating_sub(start).min(full_total);
+
+    on_progress(Progress {
+        stage: Stage::Probe,
+        frame: 0,
+        total: full_total,
+        eta_sec: 0,
+    });
+    on_progress(Progress {
+        stage: Stage::Audio,
+        frame: 0,
+        total: full_total,
+        eta_sec: 0,
+    });
 
     // Audio mix to a sibling WAV
     let wav_path = out.with_file_name("mix.wav");
@@ -70,12 +105,6 @@ pub fn export_video(
         enabled: !keep_temp,
     };
     qc_audio::mix_project(project, base, timeline, &wav_path, !no_audio_norm)?;
-
-    if json_progress {
-        println!(r#"{{"stage":"audio","frame":0,"total":0,"eta_sec":0}}"#);
-    } else {
-        let _ = writeln!(std::io::stderr(), "audio mix...");
-    }
 
     let ffmpeg_bin = ffmpeg
         .map(|p| p.to_path_buf())
@@ -90,12 +119,7 @@ pub fn export_video(
         .map(|s| s.success())
         .unwrap_or(false);
     if !version_ok {
-        return Err(CoreError::FfmpegFailed {
-            log: format!(
-                "ffmpeg not found or not runnable at {}; install FFmpeg or use --ffmpeg",
-                ffmpeg_bin.display()
-            ),
-        });
+        return Err(ExportError::Missing(ffmpeg_bin.display().to_string()));
     }
 
     let mut child = Command::new(&ffmpeg_bin)
@@ -134,13 +158,9 @@ pub fn export_video(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| CoreError::FfmpegFailed {
-            log: format!("spawn ffmpeg: {e}"),
-        })?;
+        .map_err(ExportError::Spawn)?;
 
-    let mut stdin = child.stdin.take().ok_or_else(|| CoreError::FfmpegFailed {
-        log: "no stdin".to_string(),
-    })?;
+    let mut stdin = child.stdin.take().ok_or(ExportError::NoStdin)?;
 
     let stderr = child.stderr.take();
     let stderr_handle = stderr.map(|mut s| {
@@ -151,56 +171,50 @@ pub fn export_video(
         })
     });
 
-    let full_total = timeline.total.to_frame(fps);
-    let (start, end) = range.unwrap_or((0, full_total));
-    let total_frames = end.saturating_sub(start).min(full_total);
-    if json_progress {
-        println!(
-            r#"{{"stage":"render","frame":0,"total":{},"eta_sec":0}}"#,
-            total_frames
-        );
-    } else {
-        write_progress_bar(0, total_frames);
-    }
+    on_progress(Progress {
+        stage: Stage::Render,
+        frame: 0,
+        total: total_frames,
+        eta_sec: 0,
+    });
 
+    let started = Instant::now();
     let mut produced = 0u64;
+    let mut pipe_closed = false;
     for frame_index in start..end {
         if frame_index >= full_total {
             break;
         }
-        match qc_render::render_frame_rgba(project, base, timeline, frame_index, fps, out_w, out_h)
-        {
-            Ok(rgba) => {
-                if stdin.write_all(&rgba).is_err() {
-                    break;
-                }
-                produced += 1;
-                if !json_progress {
-                    write_progress_bar(produced, total_frames);
-                }
-                if json_progress && (produced.is_multiple_of(30) || produced == total_frames) {
-                    // rough eta assuming 1 frame per 0.1s unknown; report 0
-                    println!(
-                        r#"{{"stage":"render","frame":{},"total":{},"eta_sec":0}}"#,
-                        produced, total_frames
-                    );
-                }
-            }
-            Err(_) => break,
+        let rgba =
+            qc_render::render_frame_rgba(project, base, timeline, frame_index, fps, out_w, out_h)
+                .map_err(|cause| ExportError::Frame {
+                frame: frame_index,
+                cause,
+            })?;
+        if stdin.write_all(&rgba).is_err() {
+            pipe_closed = true;
+            break;
+        }
+        produced += 1;
+        if produced.is_multiple_of(30) || produced == total_frames {
+            on_progress(Progress {
+                stage: Stage::Render,
+                frame: produced,
+                total: total_frames,
+                eta_sec: eta_sec(produced, total_frames, started),
+            });
         }
     }
 
-    if json_progress {
-        println!(
-            r#"{{"stage":"encode","frame":{},"total":{},"eta_sec":0}}"#,
-            produced, total_frames
-        );
-    }
+    on_progress(Progress {
+        stage: Stage::Encode,
+        frame: produced,
+        total: total_frames,
+        eta_sec: 0,
+    });
     drop(stdin);
 
-    let status = child
-        .wait()
-        .map_err(|e| CoreError::FfmpegFailed { log: e.to_string() })?;
+    let status = child.wait().map_err(ExportError::Wait)?;
     let log = stderr_handle
         .and_then(|h| h.join().ok())
         .unwrap_or_default();
@@ -214,18 +228,25 @@ pub fn export_video(
         .collect::<Vec<_>>()
         .join("\n");
     if !status.success() {
-        return Err(CoreError::FfmpegFailed { log: tail });
+        return Err(ExportError::Ffmpeg { log: tail });
+    }
+    if pipe_closed {
+        return Err(ExportError::Ffmpeg {
+            log: format!(
+                "ffmpeg closed the frame pipe after {produced}/{total_frames} frames\n{tail}"
+            ),
+        });
     }
 
     if keep_temp {
         wav_cleanup.enabled = false;
     }
 
-    if json_progress {
-        println!(
-            r#"{{"stage":"done","frame":{},"total":{},"eta_sec":0}}"#,
-            produced, total_frames
-        );
-    }
+    on_progress(Progress {
+        stage: Stage::Done,
+        frame: produced,
+        total: total_frames,
+        eta_sec: 0,
+    });
     Ok(())
 }

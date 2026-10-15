@@ -1,4 +1,5 @@
 use crate::commands::util;
+use anyhow::Context;
 use qc_core::CoreError;
 use std::path::PathBuf;
 
@@ -13,12 +14,13 @@ pub struct Args {
     pub force: bool,
 }
 
-pub fn run(args: Args) -> Result<(), CoreError> {
+pub fn run(args: Args) -> anyhow::Result<()> {
     if !args.dir.is_dir() {
         return Err(CoreError::InvalidProject {
             field: "dir".to_string(),
             reason: "not a directory".to_string(),
-        });
+        }
+        .into());
     }
 
     let out = if args.out.is_absolute() {
@@ -37,10 +39,12 @@ pub fn run(args: Args) -> Result<(), CoreError> {
         return Err(CoreError::InvalidProject {
             field: "out".to_string(),
             reason: format!("{} already exists, use --force", out.display()),
-        });
+        }
+        .into());
     }
 
-    let mut project = util::project_from_directory(&args.dir, &base)?;
+    let mut project = util::project_from_directory(&args.dir, &base)
+        .with_context(|| format!("scanning {}", args.dir.display()))?;
 
     if let Some(bgm) = &args.bgm {
         let rel = util::posix(bgm.strip_prefix(&base).unwrap_or(bgm));
@@ -56,9 +60,10 @@ pub fn run(args: Args) -> Result<(), CoreError> {
     })?;
     // Ensure parent exists
     if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
-    std::fs::write(&out, text)?;
+    std::fs::write(&out, text).with_context(|| format!("writing {}", out.display()))?;
     println!("wrote {}", out.display());
     Ok(())
 }

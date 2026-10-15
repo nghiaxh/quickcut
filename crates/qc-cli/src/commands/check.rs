@@ -1,5 +1,6 @@
 use crate::commands::util;
-use qc_core::CoreError;
+use anyhow::Context;
+use qc_core::{CoreError, Fit, SceneInputs};
 use std::path::PathBuf;
 
 #[derive(clap::Args, Debug)]
@@ -7,75 +8,40 @@ pub struct Args {
     pub target: PathBuf,
 }
 
-pub fn run(args: Args) -> Result<(), CoreError> {
-    let (project, base) = util::load_or_scan(&args.target)?;
-    project.validate()?;
+pub fn run(args: Args) -> anyhow::Result<()> {
+    let (project, base) = util::load_or_scan(&args.target)
+        .with_context(|| format!("loading project from {}", args.target.display()))?;
+    project.validate().context("invalid project.toml")?;
 
-    let mut inputs = Vec::new();
-    let mut warnings = Vec::new();
-
-    for (i, scene) in project.scenes.iter().enumerate() {
+    for scene in &project.scenes {
         let image_path = base.join(&scene.image);
         if !image_path.exists() {
             return Err(CoreError::MissingFile {
                 path: util::posix(&image_path),
                 reason: "scene image missing".to_string(),
-            });
+            }
+            .into());
         }
-        let img = qc_core::probe_image(&image_path)?;
-        if img.width < 480 {
-            warnings.push(format!("scene {}: image smaller than 480px wide", i + 1));
-        }
-
-        let voice_samples = if let Some(voice) = &scene.voice {
+        if let Some(voice) = &scene.voice {
             let voice_path = base.join(voice);
             if !voice_path.exists() {
                 return Err(CoreError::MissingFile {
                     path: util::posix(&voice_path),
                     reason: "scene voice missing".to_string(),
-                });
-            }
-            let info = qc_core::probe_audio(&voice_path)?;
-            if info.rms_db < -45.0 {
-                warnings.push(format!(
-                    "scene {}: voice is nearly silent ({:.1} dBFS)",
-                    i + 1,
-                    info.rms_db
-                ));
-            }
-            // scroll speed warning
-            let scaled_w = project
-                .output
-                .width
-                .saturating_sub(project.layout.margin_x * 2);
-            if img.width > 0 {
-                let scaled_h = img.height as f32 * (scaled_w as f32 / img.width as f32);
-                if scaled_h as u32 > project.output.height {
-                    let secs = info.duration_samples as f64 / 48000.0;
-                    let distance = scaled_h as f64 - project.output.height as f64;
-                    let speed = distance / secs.max(0.01);
-                    if speed > 600.0 {
-                        warnings.push(format!(
-                            "scene {}: scroll speed {:.0} px/s exceeds 600 px/s",
-                            i + 1,
-                            speed
-                        ));
-                    }
                 }
+                .into());
             }
-            Some(info.duration_samples)
-        } else {
-            None
-        };
-
-        inputs.push(qc_core::SceneInputs {
-            voice_samples,
-            image_width: img.width,
-            image_height: img.height,
-        });
+        }
     }
 
-    let timeline = qc_core::solve_timeline(&project, &inputs)?;
+    tracing::debug!(
+        "probing {} scenes resolved from {}",
+        project.scenes.len(),
+        base.display()
+    );
+    let probes = util::probe_scenes(&project, &base).context("probing scene media")?;
+    let inputs: Vec<SceneInputs> = probes.iter().map(|p| p.inputs.clone()).collect();
+    let timeline = qc_core::solve_timeline(&project, &inputs).context("solving timeline")?;
 
     println!(
         "{:<4} {:<20} {:<16} {:>8} {:>8} {:>8}",
@@ -87,16 +53,64 @@ pub fn run(args: Args) -> Result<(), CoreError> {
             span.index + 1,
             scene.image,
             scene.voice.as_deref().unwrap_or("-"),
-            (span.voice_end.0 - span.voice_start.0) as f64 / 48000.0,
-            span.start.0 as f64 / 48000.0,
-            span.end.0 as f64 / 48000.0
+            (span.voice_end.0 - span.voice_start.0) as f64 / qc_core::SAMPLE_RATE as f64,
+            span.start.0 as f64 / qc_core::SAMPLE_RATE as f64,
+            span.end.0 as f64 / qc_core::SAMPLE_RATE as f64
         );
     }
-    println!("total: {:.2}s", timeline.total.0 as f64 / 48000.0);
+    println!(
+        "total: {:.2}s",
+        timeline.total.0 as f64 / qc_core::SAMPLE_RATE as f64
+    );
 
-    for w in warnings {
-        println!("WARN: {w}");
+    for warning in warnings(&project, &probes) {
+        println!("WARN: {warning}");
     }
 
     Ok(())
+}
+
+fn warnings(project: &qc_core::Project, probes: &[qc_core::SceneProbe]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for (i, probe) in probes.iter().enumerate() {
+        if probe.inputs.image_width < qc_core::MIN_IMAGE_WIDTH {
+            warnings.push(format!(
+                "scene {}: image is {}px wide, below the {}px render minimum",
+                i + 1,
+                probe.inputs.image_width,
+                qc_core::MIN_IMAGE_WIDTH
+            ));
+        }
+        if let Some(rms_db) = probe.voice_rms_db {
+            if rms_db < -45.0 {
+                warnings.push(format!(
+                    "scene {}: voice is nearly silent ({:.1} dBFS)",
+                    i + 1,
+                    rms_db
+                ));
+            }
+        }
+        let Some(voice_samples) = probe.inputs.voice_samples else {
+            continue;
+        };
+        let fit = qc_core::fit_image(
+            probe.inputs.image_width,
+            probe.inputs.image_height,
+            project.output.width,
+            project.output.height,
+            project.layout.margin_x,
+        );
+        if let Fit::Scroll { max_offset_px } = fit {
+            let secs = voice_samples as f64 / qc_core::SAMPLE_RATE as f64;
+            let speed = max_offset_px as f64 / secs.max(0.01);
+            if speed > 600.0 {
+                warnings.push(format!(
+                    "scene {}: scroll speed {:.0} px/s exceeds 600 px/s",
+                    i + 1,
+                    speed
+                ));
+            }
+        }
+    }
+    warnings
 }

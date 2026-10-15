@@ -1,7 +1,29 @@
 use qc_core::CoreError;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 
 const SAMPLE_RATE: u32 = qc_core::SAMPLE_RATE;
+
+/// Errors owned by the audio stage. Probe and project errors stay in [`CoreError`].
+#[derive(Debug, Error)]
+pub enum AudioError {
+    #[error("resample failed: {reason}")]
+    Resample { reason: String },
+    #[error("cannot write {path}: {reason}")]
+    WavWrite { path: String, reason: String },
+    #[error(transparent)]
+    Core(#[from] CoreError),
+}
+
+impl AudioError {
+    /// Process exit code. Part of the CLI contract.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            AudioError::Core(e) => e.exit_code(),
+            _ => 4,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DecodedAudio {
@@ -20,7 +42,7 @@ pub fn mix_project(
     timeline: &qc_core::Timeline,
     out: &Path,
     normalize: bool,
-) -> Result<(), CoreError> {
+) -> Result<(), AudioError> {
     let total_frames = timeline.total.0 as usize;
     let channels = 2usize;
     let mut voice_bus = vec![0f32; total_frames * channels];
@@ -302,7 +324,7 @@ fn resample(
     in_rate: usize,
     in_channels: usize,
     out_channels: usize,
-) -> Result<Vec<f32>, CoreError> {
+) -> Result<Vec<f32>, AudioError> {
     if input.is_empty() {
         return Ok(Vec::new());
     }
@@ -333,15 +355,13 @@ fn resample(
     use rubato::{FftFixedInOut, Resampler};
     let mut resampler =
         FftFixedInOut::<f64>::new(in_rate, SAMPLE_RATE as usize, in_frames, in_channels).map_err(
-            |e| CoreError::UnsupportedAudio {
-                path: "resample".to_string(),
+            |e| AudioError::Resample {
                 reason: e.to_string(),
             },
         )?;
     let out_planar = resampler
         .process(&planar, None)
-        .map_err(|e| CoreError::UnsupportedAudio {
-            path: "resample".to_string(),
+        .map_err(|e| AudioError::Resample {
             reason: e.to_string(),
         })?;
 
@@ -419,29 +439,21 @@ fn write_wav(
     samples: &[f32],
     channels: usize,
     sample_rate: u32,
-) -> Result<(), CoreError> {
+) -> Result<(), AudioError> {
     let spec = hound::WavSpec {
         channels: channels as u16,
         sample_rate,
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
-    let mut writer =
-        hound::WavWriter::create(path, spec).map_err(|e| CoreError::InvalidProject {
-            field: "wav".to_string(),
-            reason: e.to_string(),
-        })?;
-    for s in samples {
-        writer
-            .write_sample(*s)
-            .map_err(|e| CoreError::InvalidProject {
-                field: "wav".to_string(),
-                reason: e.to_string(),
-            })?;
-    }
-    writer.finalize().map_err(|e| CoreError::InvalidProject {
-        field: "wav".to_string(),
+    let wav_err = |e: hound::Error| AudioError::WavWrite {
+        path: path.display().to_string(),
         reason: e.to_string(),
-    })?;
+    };
+    let mut writer = hound::WavWriter::create(path, spec).map_err(wav_err)?;
+    for s in samples {
+        writer.write_sample(*s).map_err(wav_err)?;
+    }
+    writer.finalize().map_err(wav_err)?;
     Ok(())
 }

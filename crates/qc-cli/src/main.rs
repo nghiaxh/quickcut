@@ -1,13 +1,18 @@
 mod commands;
 
 use clap::{Parser, Subcommand};
+use commands::render::ArgError;
 use qc_core::CoreError;
+use qc_export::ExportError;
 
 #[derive(Parser)]
 #[command(name = "quickcut", version, about = "QuickCut media renderer")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    /// Log more: -v for info, -vv for debug.
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 #[derive(Subcommand)]
@@ -19,23 +24,28 @@ enum Commands {
 }
 
 fn main() {
-    // Logging level handled by global flag count when present in subcommands is not available here;
-    // default to warn. Subcommands may raise verbosity in future.
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .try_init();
-
     let cli = Cli::parse();
-    match dispatch(cli.command) {
-        Ok(()) => std::process::exit(0),
-        Err(e) => {
-            eprintln!("error: {e}");
-            std::process::exit(exit_code(&e));
-        }
+    init_tracing(cli.verbose);
+
+    if let Err(e) = run(cli.command) {
+        eprintln!("error: {e:#}");
+        std::process::exit(exit_code(&e));
     }
 }
 
-fn dispatch(command: Commands) -> Result<(), CoreError> {
+fn init_tracing(verbose: u8) {
+    let level = match verbose {
+        0 => tracing::Level::WARN,
+        1 => tracing::Level::INFO,
+        _ => tracing::Level::DEBUG,
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
+fn run(command: Commands) -> anyhow::Result<()> {
     match command {
         Commands::Init(a) => commands::init::run(a),
         Commands::Check(a) => commands::check::run(a),
@@ -44,13 +54,17 @@ fn dispatch(command: Commands) -> Result<(), CoreError> {
     }
 }
 
-fn exit_code(err: &CoreError) -> i32 {
-    match err {
-        CoreError::MissingFile { .. }
-        | CoreError::ImageTooSmall { .. }
-        | CoreError::InvalidProject { .. } => 1,
-        CoreError::UnsupportedAudio { .. } => 2,
-        CoreError::FfmpegFailed { .. } => 3,
-        _ => 4,
+/// Maps the error to the exit codes fixed by the CLI contract: 1 input, 2 decode,
+/// 3 ffmpeg, 4 anything else.
+fn exit_code(err: &anyhow::Error) -> i32 {
+    if let Some(e) = err.downcast_ref::<ExportError>() {
+        return e.exit_code();
     }
+    if let Some(_e) = err.downcast_ref::<ArgError>() {
+        return 1;
+    }
+    if let Some(e) = err.downcast_ref::<CoreError>() {
+        return e.exit_code();
+    }
+    4
 }

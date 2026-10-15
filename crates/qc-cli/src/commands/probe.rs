@@ -1,4 +1,5 @@
 use crate::commands::util;
+use anyhow::Context;
 use qc_core::CoreError;
 use std::path::PathBuf;
 
@@ -7,7 +8,7 @@ pub struct Args {
     pub file: PathBuf,
 }
 
-pub fn run(args: Args) -> Result<(), CoreError> {
+pub fn run(args: Args) -> anyhow::Result<()> {
     let ext = args
         .file
         .extension()
@@ -16,10 +17,12 @@ pub fn run(args: Args) -> Result<(), CoreError> {
         .to_lowercase();
 
     if util::is_image_ext(&ext) {
-        let info = qc_core::probe_image(&args.file)?;
+        let info = qc_core::probe_image(&args.file)
+            .with_context(|| format!("reading image {}", args.file.display()))?;
         println!("image: {}x{}", info.width, info.height);
     } else if util::is_audio_ext(&ext) {
-        let info = qc_core::probe_audio(&args.file)?;
+        let info = qc_core::probe_audio(&args.file)
+            .with_context(|| format!("decoding audio {}", args.file.display()))?;
         println!(
             "audio: {} Hz, {} ch, {:.3}s ({} samples)",
             info.sample_rate, info.channels, info.duration_secs, info.duration_samples
@@ -28,7 +31,8 @@ pub fn run(args: Args) -> Result<(), CoreError> {
         return Err(CoreError::UnsupportedAudio {
             path: util::posix(&args.file),
             reason: "not a supported image or audio file".to_string(),
-        });
+        }
+        .into());
     }
     Ok(())
 }

@@ -1,5 +1,9 @@
-use qc_core::CoreError;
+use crate::commands::util;
+use anyhow::Context;
+use qc_core::{Progress, SceneInputs, Stage, Timeline};
+use std::io::Write;
 use std::path::PathBuf;
+use thiserror::Error;
 
 #[derive(clap::Args, Debug)]
 pub struct Args {
@@ -9,10 +13,10 @@ pub struct Args {
     pub output: PathBuf,
     #[arg(long, default_value = "final")]
     pub preset: String,
-    #[arg(long, default_value_t = 30)]
-    pub fps: u32,
-    #[arg(long, default_value = "1080x1920")]
-    pub size: String,
+    #[arg(long)]
+    pub fps: Option<u32>,
+    #[arg(long)]
+    pub size: Option<String>,
     #[arg(long)]
     pub range: Option<String>,
     #[arg(long)]
@@ -23,39 +27,39 @@ pub struct Args {
     pub no_audio_norm: bool,
     #[arg(long)]
     pub keep_temp: bool,
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    pub verbose: u8,
     #[arg(long)]
     pub json_progress: bool,
 }
 
-pub fn run(args: Args) -> Result<(), CoreError> {
-    let (project, base) = crate::commands::util::load_or_scan(&args.project)?;
-    project.validate()?;
+/// A flag the user typed that could not be parsed. Never guessed at silently.
+#[derive(Debug, Error)]
+pub enum ArgError {
+    #[error("invalid --size {0:?}: expected WIDTHxHEIGHT, for example 1080x1920")]
+    Size(String),
+    #[error("invalid --range {0:?}: expected FIRST:LAST, for example 1:3")]
+    Range(String),
+    #[error("unknown --preset {0:?}: expected draft or final")]
+    Preset(String),
+}
 
-    let mut inputs = Vec::new();
-    for scene in &project.scenes {
-        let img = qc_core::probe_image(&base.join(&scene.image))?;
-        let voice_samples = if let Some(v) = &scene.voice {
-            Some(qc_core::probe_audio(&base.join(v))?.duration_samples)
-        } else {
-            None
-        };
-        inputs.push(qc_core::SceneInputs {
-            voice_samples,
-            image_width: img.width,
-            image_height: img.height,
-        });
+pub fn run(args: Args) -> anyhow::Result<()> {
+    let (project, base) = util::load_or_scan(&args.project)
+        .with_context(|| format!("loading project from {}", args.project.display()))?;
+    project.validate().context("invalid project.toml")?;
+
+    if !matches!(args.preset.as_str(), "draft" | "final") {
+        return Err(ArgError::Preset(args.preset.clone()).into());
     }
-    let timeline = qc_core::solve_timeline(&project, &inputs)?;
 
-    let (width, height) =
-        parse_size(&args.size).unwrap_or((project.output.width, project.output.height));
-    let fps = if args.fps == 0 {
-        project.output.fps
-    } else {
-        args.fps
+    let probes = util::probe_scenes(&project, &base).context("probing scene media")?;
+    let inputs: Vec<SceneInputs> = probes.iter().map(|p| p.inputs.clone()).collect();
+    let timeline = qc_core::solve_timeline(&project, &inputs).context("solving timeline")?;
+
+    let (width, height) = match &args.size {
+        Some(s) => parse_size(s).ok_or_else(|| ArgError::Size(s.to_string()))?,
+        None => (project.output.width, project.output.height),
     };
+    let fps = args.fps.unwrap_or(project.output.fps);
 
     if let Some(n) = args.threads {
         let _ = rayon::ThreadPoolBuilder::new()
@@ -63,27 +67,28 @@ pub fn run(args: Args) -> Result<(), CoreError> {
             .build_global();
     }
 
-    // Convert scene range (1-based) into frame bounds.
-    let range = if let Some(r) = &args.range {
-        let mut parts = r.split(':');
-        let a: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
-        let b: usize = parts
-            .next()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(project.scenes.len());
-        let a = a
-            .saturating_sub(1)
-            .min(timeline.scenes.len().saturating_sub(1));
-        let b = b
-            .saturating_sub(1)
-            .min(timeline.scenes.len().saturating_sub(1));
-        let start_frame = timeline.scenes[a].start.to_frame(fps);
-        let end_frame = timeline.scenes[b].end.to_frame(fps);
-        Some((start_frame, end_frame))
-    } else {
-        None
+    let range = match &args.range {
+        Some(r) => Some(parse_range(r, &timeline, fps)?),
+        None => None,
     };
 
+    let total_frames = timeline.total.to_frame(fps);
+    tracing::debug!(
+        "{} scenes, {} frames at {} fps, {}x{}",
+        timeline.scenes.len(),
+        total_frames,
+        fps,
+        width,
+        height
+    );
+    tracing::info!(
+        "rendering {} to {} with preset {}",
+        args.project.display(),
+        args.output.display(),
+        args.preset
+    );
+
+    let mut progress = ProgressPrinter::new(args.json_progress);
     qc_export::export_video(
         &project,
         &base,
@@ -97,14 +102,99 @@ pub fn run(args: Args) -> Result<(), CoreError> {
         range,
         args.no_audio_norm,
         args.keep_temp,
-        args.json_progress,
-    )?;
+        &mut |p| progress.update(p),
+    )
+    .with_context(|| format!("exporting {}", args.output.display()))?;
 
     println!("wrote {}", args.output.display());
     Ok(())
 }
 
+/// Turns pipeline reports into either JSON lines (stable, for the desktop app)
+/// or a terminal progress bar.
+struct ProgressPrinter {
+    json: bool,
+    on_bar: bool,
+}
+
+impl ProgressPrinter {
+    fn new(json: bool) -> Self {
+        Self {
+            json,
+            on_bar: false,
+        }
+    }
+
+    fn update(&mut self, p: Progress) {
+        if self.json {
+            if let Ok(line) = serde_json::to_string(&p) {
+                println!("{line}");
+            }
+            return;
+        }
+        match p.stage {
+            Stage::Render => {
+                self.on_bar = true;
+                draw_bar(p.frame, p.total);
+            }
+            Stage::Probe | Stage::Audio | Stage::Encode | Stage::Done => {
+                if self.on_bar {
+                    // Close the bar so the next line does not overwrite it.
+                    let _ = writeln!(std::io::stderr());
+                    self.on_bar = false;
+                }
+                let _ = writeln!(std::io::stderr(), "{}...", p.stage.as_str());
+            }
+        }
+    }
+}
+
+fn draw_bar(produced: u64, total: u64) {
+    const BAR_WIDTH: usize = 24;
+    let pct = produced
+        .checked_mul(100)
+        .and_then(|scaled| scaled.checked_div(total))
+        .unwrap_or(100)
+        .min(100);
+    let filled = ((BAR_WIDTH * pct as usize) / 100).min(BAR_WIDTH);
+    let _ = write!(
+        std::io::stderr(),
+        "\rrendering: [{}{}] {:>3}% ({}/{})",
+        "#".repeat(filled),
+        "-".repeat(BAR_WIDTH - filled),
+        pct,
+        produced,
+        total
+    );
+    let _ = std::io::stderr().flush();
+}
+
 fn parse_size(s: &str) -> Option<(u32, u32)> {
     let (w, h) = s.split_once('x')?;
     Some((w.parse().ok()?, h.parse().ok()?))
+}
+
+/// `1:3` means scenes 1 through 3 inclusive; frames come from the solved timeline.
+fn parse_range(s: &str, timeline: &Timeline, fps: u32) -> Result<(u64, u64), ArgError> {
+    let bad = || {
+        ArgError::Range(format!(
+            "{s} (project has {} scenes)",
+            timeline.scenes.len()
+        ))
+    };
+    let mut parts = s.split(':');
+    let (Some(first), Some(last), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(bad());
+    };
+    let (Ok(first), Ok(last)) = (first.trim().parse::<usize>(), last.trim().parse::<usize>())
+    else {
+        return Err(bad());
+    };
+    if first == 0 || last == 0 || first > last || last > timeline.scenes.len() {
+        return Err(bad());
+    }
+    Ok((
+        timeline.scenes[first - 1].start.to_frame(fps),
+        timeline.scenes[last - 1].end.to_frame(fps),
+    ))
 }

@@ -69,7 +69,9 @@ pub fn project_from_directory(input: &Path, base: &Path) -> Result<qc_core::Proj
     images.sort_by_key(|(s, _)| (numeric_prefix(s), s.clone()));
 
     let mut scenes = Vec::new();
+    let mut image_stems = Vec::new();
     for (stem, path) in &images {
+        image_stems.push(stem.clone());
         let voice = audios
             .get(stem)
             .map(|p| posix(p.strip_prefix(base).unwrap_or(p)));
@@ -120,4 +122,18 @@ pub fn load_or_scan(target: &Path) -> Result<(qc_core::Project, PathBuf), CoreEr
             .to_path_buf();
         Ok((project, base))
     }
+}
+
+/// Probe every scene's media. Decoding dominates this step, so scenes run in parallel;
+/// results keep scene order.
+pub fn probe_scenes(
+    project: &qc_core::Project,
+    base: &Path,
+) -> Result<Vec<qc_core::SceneProbe>, CoreError> {
+    use rayon::prelude::*;
+    project
+        .scenes
+        .par_iter()
+        .map(|scene| qc_core::probe_scene(base, scene))
+        .collect()
 }

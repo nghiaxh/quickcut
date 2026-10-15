@@ -1,7 +1,36 @@
-use qc_core::CoreError;
+use qc_core::{CoreError, Fit};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
+
+/// Errors owned by the render stage.
+#[derive(Debug, Error)]
+pub enum RenderError {
+    #[error("cannot read image {path}: {reason}")]
+    Decode { path: String, reason: String },
+    #[error(
+        "image {path} is {width}x{height}, narrower than the {}px minimum",
+        qc_core::MIN_IMAGE_WIDTH
+    )]
+    TooSmall {
+        path: String,
+        width: u32,
+        height: u32,
+    },
+    #[error(transparent)]
+    Project(#[from] CoreError),
+}
+
+impl RenderError {
+    /// Process exit code. Part of the CLI contract.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            RenderError::Project(e) => e.exit_code(),
+            _ => 1,
+        }
+    }
+}
 
 pub fn render_frame_rgba(
     project: &qc_core::Project,
@@ -11,7 +40,7 @@ pub fn render_frame_rgba(
     fps: u32,
     width: u32,
     height: u32,
-) -> Result<Vec<u8>, CoreError> {
+) -> Result<Vec<u8>, RenderError> {
     let frame_sample = frame_index * qc_core::SAMPLE_RATE as u64 / fps as u64;
 
     // find scene span containing this frame
@@ -78,12 +107,12 @@ fn render_scene_canvas(
     fps: u32,
     width: u32,
     height: u32,
-) -> Result<image::RgbaImage, CoreError> {
+) -> Result<image::RgbaImage, RenderError> {
     let span = &timeline.scenes[scene_index];
     let margin = project.layout.margin_x;
     let avail_width = width.saturating_sub(margin * 2);
 
-    let image_path = base.join(&project.scenes[scene_index].image);
+    let image_path = base.join(&span.image);
     let assets = cached_assets(project, &image_path, width, height, avail_width)?;
 
     // Animation progress.
@@ -142,7 +171,7 @@ fn render_scene_canvas(
     }
 
     // Scroll offset for long images.
-    let offset_y = if scaled_h > height {
+    let offset_y = if let Fit::Scroll { max_offset_px } = assets.fit {
         let voice_start_frame = span.voice_start.to_frame(fps);
         let voice_end_frame = span.voice_end.to_frame(fps);
         let mut progress = 0.0f32;
@@ -159,15 +188,13 @@ fn render_scene_canvas(
             }
         }
         progress = ease_in_out_cubic(progress);
-        let max_off = scaled_h.saturating_sub(height);
-        (max_off as f32 * progress).round() as u32
+        (max_offset_px as f32 * progress).round() as u32
     } else {
         0
     };
-    let y = if scaled_h > height {
-        -(offset_y as i32)
-    } else {
-        ((height - scaled_h) / 2) as i32
+    let y = match assets.fit {
+        Fit::Centered => ((height - scaled_h) / 2) as i32,
+        Fit::Scroll { .. } => -(offset_y as i32),
     };
 
     // Background canvas.
@@ -196,6 +223,7 @@ struct RenderAssets {
     background: image::RgbaImage,
     scaled: image::RgbaImage,
     shadow: image::RgbaImage,
+    fit: Fit,
 }
 
 static RENDER_CACHE: std::sync::LazyLock<Mutex<HashMap<String, Arc<RenderAssets>>>> =
@@ -207,7 +235,7 @@ fn cached_assets(
     width: u32,
     height: u32,
     avail_width: u32,
-) -> Result<Arc<RenderAssets>, CoreError> {
+) -> Result<Arc<RenderAssets>, RenderError> {
     let key = format!(
         "{}|{}x{}|{}|{}|{}|{}|{}|{}|{}",
         image_path.display(),
@@ -227,13 +255,21 @@ fn cached_assets(
     }
 
     let scene_image = image::open(image_path)
-        .map_err(|e| CoreError::MissingFile {
+        .map_err(|e| RenderError::Decode {
             path: image_path.display().to_string(),
             reason: e.to_string(),
         })?
         .to_rgba8();
 
     let (orig_w, orig_h) = scene_image.dimensions();
+    if orig_w < qc_core::MIN_IMAGE_WIDTH {
+        return Err(RenderError::TooSmall {
+            path: image_path.display().to_string(),
+            width: orig_w,
+            height: orig_h,
+        });
+    }
+    let fit = qc_core::fit_image(orig_w, orig_h, width, height, project.layout.margin_x);
     let scale = avail_width as f32 / orig_w as f32;
     let scaled_h = (orig_h as f32 * scale).round() as u32;
     let scaled = image::imageops::resize(
@@ -244,7 +280,7 @@ fn cached_assets(
     );
 
     let mut background = image::RgbaImage::new(width, height);
-    fill_background(&mut background, project, &scene_image, width, height);
+    fill_background(&mut background, project, &scene_image, width, height)?;
 
     // Shadow base: rounded-ish silhouette from scaled alpha, blurred.
     let mut shadow_mask = image::RgbaImage::new(scaled.dimensions().0, scaled.dimensions().1);
@@ -267,6 +303,7 @@ fn cached_assets(
         background,
         scaled,
         shadow,
+        fit,
     });
 
     RENDER_CACHE.lock().unwrap().insert(key, assets.clone());
@@ -298,14 +335,14 @@ fn fill_background(
     src: &image::RgbaImage,
     width: u32,
     height: u32,
-) {
+) -> Result<(), RenderError> {
     match project.background.kind.as_str() {
         "solid" => {
             for px in canvas.pixels_mut() {
                 *px = image::Rgba([0, 0, 0, 255]);
             }
         }
-        _ => {
+        "blur_from_image" => {
             let (w, h) = src.dimensions();
             let sx = width as f32 / w as f32;
             let sy = height as f32 / h as f32;
@@ -326,7 +363,13 @@ fn fill_background(
                 *dst = image::Rgba([r, g, b, 255]);
             }
         }
+        other => {
+            return Err(RenderError::Project(CoreError::NotImplemented {
+                feature: format!("background kind {other:?} (supported: solid, blur_from_image)"),
+            }));
+        }
     }
+    Ok(())
 }
 
 fn round_corners(img: &mut image::RgbaImage, radius: u32) {
