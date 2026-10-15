@@ -2993,6 +2993,7 @@ dependencies = [
  "qc-audio",
  "qc-core",
  "qc-render",
+ "rayon",
  "thiserror 2.0.21",
 ]
 
