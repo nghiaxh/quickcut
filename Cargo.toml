@@ -6,12 +6,31 @@ members = [
     "crates/qc-render",
     "crates/qc-export",
     "crates/qc-cli",
-    "apps/desktop",
 ]
-# Desktop is the product: a bare `cargo run` or `cargo build` at the repo root
-# targets the app, not the CLI.
-default-members = ["apps/desktop"]
+# Desktop is the product: a bare `cargo run` or `cargo build` targets the app's
+# root package, not the CLI.
+default-members = ["."]
 
 [workspace.package]
 edition = "2021"
 license = "MIT"
+
+[package]
+name = "quickcut"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "quickcut"
+path = "src/main.rs"
+
+[dependencies]
+qc-core = { path = "crates/qc-core" }
+qc-render = { path = "crates/qc-render" }
+qc-export = { path = "crates/qc-export" }
+eframe = "0.29"
+egui = "0.29"
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
