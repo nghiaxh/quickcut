@@ -2990,6 +2990,7 @@ dependencies = [
 name = "qc-export"
 version = "0.1.0"
 dependencies = [
+ "image",
  "qc-audio",
  "qc-core",
  "qc-render",
