@@ -23,6 +23,8 @@ pub enum ExportError {
     Spawn(std::io::Error),
     #[error("ffmpeg stdin is unavailable")]
     NoStdin,
+    #[error("export cancelled")]
+    Cancelled,
     #[error("cannot wait for ffmpeg: {0}")]
     Wait(std::io::Error),
     #[error("frame {frame} failed to render: {cause}")]
@@ -41,7 +43,10 @@ impl ExportError {
             ExportError::Frame { cause, .. } => cause.exit_code(),
             ExportError::Audio(e) => e.exit_code(),
             ExportError::Project(e) => e.exit_code(),
-            ExportError::Spawn(_) | ExportError::NoStdin | ExportError::Wait(_) => 4,
+            ExportError::Spawn(_)
+            | ExportError::NoStdin
+            | ExportError::Wait(_)
+            | ExportError::Cancelled => 4,
         }
     }
 }
@@ -260,6 +265,7 @@ pub fn export_video(
     range: Option<(u64, u64)>,
     no_audio_norm: bool,
     keep_temp: bool,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<(), ExportError> {
     let (out_w, out_h, ffmpeg_preset, crf) = match preset {
@@ -374,6 +380,15 @@ pub fn export_video(
         BackgroundSource::new(project, base, timeline, fps, out_w, out_h, &ffmpeg_bin)?;
 
     'rounds: for round in frames.chunks(block) {
+        if cancel
+            .as_ref()
+            .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false)
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ExportError::Cancelled);
+        }
         // Background frames are decoded in order before the parallel render, so the
         // result does not depend on how many threads run or in what order.
         let background_frames = background.frames(round)?;

@@ -140,6 +140,12 @@ pub fn render_frame_into(
     Ok(())
 }
 
+/// Drop all cached assets and settled frames. Call after project edits.
+pub fn reset_caches() {
+    RENDER_CACHE.lock().unwrap().clear();
+    STATIC_SCENE.lock().unwrap().clear();
+}
+
 /// Render one frame into a freshly allocated buffer.
 #[allow(clippy::too_many_arguments)]
 pub fn render_frame_rgba(

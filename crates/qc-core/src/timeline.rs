@@ -92,9 +92,10 @@ pub fn solve(project: &crate::Project, inputs: &[SceneInputs]) -> Result<Timelin
     let mut prev_end = Samples(0);
 
     for (i, (scene, input)) in project.scenes.iter().zip(inputs.iter()).enumerate() {
+        let hold = scene.hold_sec.unwrap_or(project.timing.default_hold);
         let voice_len = match input.voice_samples {
             Some(v) => Samples(v),
-            None => Samples::from_secs(project.timing.default_hold),
+            None => Samples::from_secs(hold),
         };
 
         let scene_len = pad_before.0 + voice_len.0 + pad_after.0;

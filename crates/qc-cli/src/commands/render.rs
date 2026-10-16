@@ -104,6 +104,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         range,
         args.no_audio_norm,
         args.keep_temp,
+        None,
         &mut |p| progress.update(p),
     )
     .with_context(|| format!("exporting {}", args.output.display()))?;

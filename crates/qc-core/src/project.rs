@@ -286,6 +286,10 @@ pub struct Scene {
     pub image: String,
     #[serde(default)]
     pub voice: Option<String>,
+    #[serde(default)]
+    pub hold_sec: Option<f64>,
+    #[serde(default)]
+    pub caption: Option<String>,
     #[serde(default = "d_anim_in")]
     pub anim_in: String,
     #[serde(default = "d_anim_out")]
@@ -301,6 +305,8 @@ impl Default for Scene {
         Self {
             image: String::new(),
             voice: None,
+            hold_sec: None,
+            caption: None,
             anim_in: d_anim_in(),
             anim_out: d_anim_out(),
             transition_sfx: None,
