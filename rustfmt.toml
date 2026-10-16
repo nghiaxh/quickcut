@@ -1,0 +1,6 @@
+edition = "2021"
+# .gitattributes forces LF in the working tree; without this the Windows dev box
+# would rewrite formatted files to CRLF.
+newline_style = "Unix"
+# No imports_granularity or group_imports: those need nightly rustfmt, and CI runs
+# the pinned stable toolchain.

@@ -1,7 +1,7 @@
 # Rust build artifacts
 target/
 
-# Sample media is generated, not authored. tools/make-demo.ps1 rebuilds it.
+# Sample media is ignored
 examples/
 assets/
 
