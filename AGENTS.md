@@ -55,6 +55,6 @@ Exit codes: `0` success, `1` input error, `2` decode error, `3` FFmpeg error, `4
 - `qc-core` and `qc-audio` must request the same symphonia features. Otherwise `check` accepts formats that `render` cannot mix, which is worse than rejecting the format outright.
 - Resampling to 48 kHz goes through `FftFixedInOut` in fixed chunks with a partial flush, and the half-filter-length delay is dropped. Do not feed it a whole-file buffer: it rounds the chunk size up and then rejects the input.
 - Images narrower than `qc_core::MIN_IMAGE_WIDTH` (480) are warned about by `check` and refused by `render`.
-- `background.kind` supports `solid` and `blur_from_image`; anything else fails with `NotImplemented`.
+- `background.kind` supports `solid`, `blur_from_image`, and `video`; anything else fails with `NotImplemented`. A `video` background names one clip or a directory of clips; the clip is cover-scaled, blurred in ffmpeg, decoded in `qc-export`, and picked per scene by `assign_background_clips` (seeded, so `--range` matches a full render).
 - The `--json-progress` output is part of the CLI contract and must remain stable: keys `stage`, `frame`, `total`, `eta_sec`; stages `probe`, `audio`, `render`, `encode`, `done`.
 - `qc-export` never prints; it hands `Progress` to a callback and the CLI picks JSON lines or a progress bar.

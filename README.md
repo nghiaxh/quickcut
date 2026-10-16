@@ -14,7 +14,7 @@ A CLI-first Rust renderer that turns a folder of images and voice audio into a "
 - TOML project files shared between CLI and desktop app
 - Timeline solved from voice durations, integer samples at 48 kHz
 - Audio mixing: voice, SFX, BGM looping, ducking, EBU R128 loudness normalization
-- Frame rendering: blurred or solid background, pop and slide animations, cross-fade between scenes, rounded corners, drop shadow
+- Frame rendering: blurred, solid, or video background, pop and slide animations, cross-fade between scenes, rounded corners, drop shadow
 - Auto-scroll for tall screenshots, timed to the voice track
 - H.264 MP4 through FFmpeg, with a fast `draft` preset for quick previews
 - Stable JSON progress output for tooling
@@ -102,7 +102,7 @@ Use `--threads N` to cap the render pool. On a loaded machine, four threads ofte
 ## Current limits
 
 - Scene images must be at least 480 px wide; `check` warns, `render` refuses
-- `background.kind` supports `solid` and `blur_from_image`
+- `background.kind` supports `solid`, `blur_from_image`, and `video` (one clip, or a directory of clips picked per scene)
 - The peak limiter trims the entire mix to the true-peak ceiling instead of applying look-ahead gain reduction, so quiet passages are not lifted
 
 ## Project Layout
