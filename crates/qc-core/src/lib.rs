@@ -1,4 +1,5 @@
 pub mod error;
+pub mod init;
 pub mod probe;
 pub mod progress;
 pub mod project;
@@ -6,6 +7,7 @@ pub mod time;
 pub mod timeline;
 
 pub use error::CoreError;
+pub use init::*;
 pub use probe::*;
 pub use progress::*;
 pub use project::*;
