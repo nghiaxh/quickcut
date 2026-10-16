@@ -4,12 +4,12 @@ Rust workspace implementing a desktop-first video editor for "react thread post"
 
 ## Build and checks
 
-- Run the app: `cargo run` (desktop is the workspace default member)
+- Run the app: `cargo run` (the root package is the workspace default member)
 - Build the CLI: `cargo build -p qc-cli` (release: `cargo build -p qc-cli --release`); the binary is `quickcut-cli`
 - Format check: `cargo fmt --check`
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Tests: `cargo test --workspace`
-- The desktop app is a normal workspace member under `apps/desktop`; root cargo commands and CI cover it
+- The desktop app is the root workspace package; root cargo commands and CI cover it
 - Rust edition 2021, toolchain pinned in `rust-toolchain.toml`. FFmpeg must be in `PATH` for `render`.
 
 ## Workspace boundaries
@@ -19,7 +19,7 @@ Rust workspace implementing a desktop-first video editor for "react thread post"
 - `qc-render`: frame composition built on the `image` crate (not tiny-skia): animation, cross-fade, rounded corners, shadow. `render_frame_into` writes into a caller-owned buffer and uses per-thread scratch, so the frame loop allocates nothing. Scenes whose animation has settled are composited once and cached.
 - `qc-export`: FFmpeg pipe orchestration, owns the frame loop, reports progress through a callback, and renders frames in parallel rounds that reach ffmpeg in strict order
 - `qc-cli`: clap entrypoint and commands, packaged as the secondary `quickcut-cli` binary
-- `apps/desktop`: egui desktop app, packaged as `quickcut`, the primary product
+- root package `quickcut`: egui desktop app, packaged as `quickcut`, the primary product
 - Dependency direction: `cli, desktop -> export -> render,audio -> core`
 
 ## Error handling

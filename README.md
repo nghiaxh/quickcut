@@ -211,18 +211,17 @@ Use `--threads N` to cap the render pool. On a loaded machine, four threads ofte
 
 ```text
 quickcut/
+  src/           egui desktop app, the root package (the product)
   crates/
     qc-core/     Shared model, parser, timeline solver, probing
     qc-audio/    Decode, mix, duck, loudness
     qc-render/   Frame compositor
     qc-export/   FFmpeg pipe export
     qc-cli/      Secondary command-line interface
-  apps/
-    desktop/     egui desktop app (the product)
   .github/       CI workflows
 ```
 
-`apps/desktop` is a workspace member, so root cargo commands and CI build it by default. Sample media is kept out of the repository: `examples/` and `assets/` are git ignored.
+The root package is the desktop app, so root cargo commands and CI build it by default. Sample media is kept out of the repository: `examples/` and `assets/` are git ignored.
 
 ## Status
 
