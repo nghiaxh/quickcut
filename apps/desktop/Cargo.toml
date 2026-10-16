@@ -1,13 +1,11 @@
-[workspace]
-
 [package]
-name = "quickcut-desktop"
+name = "quickcut"
 version = "0.1.0"
-edition = "2021"
-license = "MIT"
+edition.workspace = true
+license.workspace = true
 
 [[bin]]
-name = "quickcut-desktop"
+name = "quickcut"
 path = "src/main.rs"
 
 [dependencies]
@@ -17,3 +15,5 @@ qc-export = { path = "../../crates/qc-export" }
 eframe = "0.29"
 egui = "0.29"
 rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

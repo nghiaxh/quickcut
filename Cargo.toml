@@ -6,7 +6,11 @@ members = [
     "crates/qc-render",
     "crates/qc-export",
     "crates/qc-cli",
+    "apps/desktop",
 ]
+# Desktop is the product: a bare `cargo run` or `cargo build` at the repo root
+# targets the app, not the CLI.
+default-members = ["apps/desktop"]
 
 [workspace.package]
 edition = "2021"
