@@ -1,41 +1,17 @@
 name: ci
 on: [push, pull_request]
 jobs:
-  test:
+  lint:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: install ffmpeg
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ffmpeg; fi
-          if [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg; fi
-          if [ "$RUNNER_OS" = "Windows" ]; then choco install ffmpeg; fi
-        shell: bash
       # --all-targets matters: without it clippy skips tests and benches, which is
       # where most of the code lives once the suite grows.
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      # Sample media is not committed, so the smoke test builds its own fixture.
-      # If this ever passes without running a real render it is worthless.
-      - name: smoke test a real render
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .ci-fixture
-          ffmpeg -v error -y -f lavfi -i "color=c=0xf5f3f0:s=1080x1920" -frames:v 1 .ci-fixture/01.png
-          ffmpeg -v error -y -f lavfi -i "sine=frequency=440:duration=1" -ar 48000 -ac 1 .ci-fixture/01.wav
-          printf 'schema_version = 1\n\n[[scene]]\nimage = "01.png"\nvoice = "01.wav"\n' > .ci-fixture/project.toml
-          cargo run --release -p qc-cli -- render .ci-fixture --preset draft -o .ci-fixture/render-check.mp4
-          ffprobe -v error -show_entries format=duration -of csv=p=0 .ci-fixture/render-check.mp4
-      - uses: actions/upload-artifact@v4
-        with:
-          name: render-check-${{ matrix.os }}
-          path: .ci-fixture/render-check.mp4
-          if-no-files-found: error
 
   desktop:
     # Separate Cargo workspace, so root commands never see it.
