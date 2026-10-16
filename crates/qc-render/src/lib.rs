@@ -59,6 +59,10 @@ fn copy_pixels(dst: &mut image::RgbaImage, src: &image::RgbaImage) {
 }
 
 /// Render one frame into `out`, reusing its allocation across frames.
+///
+/// `background` is the decoded video-background frame for this index, when the
+/// project uses `background.kind = "video"`; it is `None` for the solid and
+/// blur-from-image backgrounds, which are baked per scene instead.
 #[allow(clippy::too_many_arguments)]
 pub fn render_frame_into(
     out: &mut Vec<u8>,
@@ -69,10 +73,11 @@ pub fn render_frame_into(
     fps: u32,
     width: u32,
     height: u32,
+    background: Option<&image::RgbaImage>,
 ) -> Result<(), RenderError> {
     let frame_sample = frame_index * qc_core::SAMPLE_RATE as u64 / fps as u64;
 
-    let scene_index = scene_at(timeline, frame_sample);
+    let scene_index = timeline.scene_index(qc_core::Samples(frame_sample));
     // `from_raw` adopts the caller's buffer, so the finished frame is handed back
     // without a copy and without a fresh allocation.
     let mut canvas = match image::RgbaImage::from_raw(width, height, std::mem::take(out)) {
@@ -92,6 +97,7 @@ pub fn render_frame_into(
                 fps,
                 width,
                 height,
+                background,
             )?;
             FADE.with(|slot| -> Result<(), RenderError> {
                 let mut previous = slot.borrow_mut();
@@ -106,6 +112,7 @@ pub fn render_frame_into(
                     fps,
                     width,
                     height,
+                    background,
                 )?;
                 for (dst, previous_px) in canvas.pixels_mut().zip(previous.pixels()) {
                     for c in 0..4 {
@@ -125,6 +132,7 @@ pub fn render_frame_into(
             fps,
             width,
             height,
+            background,
         )?,
     }
 
@@ -133,6 +141,7 @@ pub fn render_frame_into(
 }
 
 /// Render one frame into a freshly allocated buffer.
+#[allow(clippy::too_many_arguments)]
 pub fn render_frame_rgba(
     project: &qc_core::Project,
     base: &Path,
@@ -141,6 +150,7 @@ pub fn render_frame_rgba(
     fps: u32,
     width: u32,
     height: u32,
+    background: Option<&image::RgbaImage>,
 ) -> Result<Vec<u8>, RenderError> {
     let mut out = Vec::with_capacity(width as usize * height as usize * 4);
     render_frame_into(
@@ -152,17 +162,9 @@ pub fn render_frame_rgba(
         fps,
         width,
         height,
+        background,
     )?;
     Ok(out)
-}
-
-fn scene_at(timeline: &qc_core::Timeline, frame_sample: u64) -> usize {
-    for (i, span) in timeline.scenes.iter().enumerate() {
-        if frame_sample >= span.start.0 && frame_sample < span.end.0 {
-            return i;
-        }
-    }
-    timeline.scenes.len().saturating_sub(1)
 }
 
 /// Previous scene still visible during a cross-fade, plus how far the fade has run.
@@ -195,6 +197,7 @@ fn draw_scene(
     fps: u32,
     width: u32,
     height: u32,
+    background: Option<&image::RgbaImage>,
 ) -> Result<(), RenderError> {
     let span = &timeline.scenes[scene_index];
     let margin = project.layout.margin_x;
@@ -213,8 +216,11 @@ fn draw_scene(
 
     // Once both easings have settled and nothing scrolls, every remaining frame of
     // the scene is pixel identical. Compositing a long static video is pure waste,
-    // so render it once and hand out copies.
-    let settled = t_in >= 1.0 && t_out >= 1.0 && matches!(assets.fit, Fit::Centered);
+    // so render it once and hand out copies. A video background changes every frame,
+    // so those scenes never settle.
+    let video_background = project.background.kind == "video";
+    let settled =
+        t_in >= 1.0 && t_out >= 1.0 && matches!(assets.fit, Fit::Centered) && !video_background;
     let static_key = format!(
         "{scene_index}|{}",
         assets_key(project, &image_path, width, height)
@@ -238,6 +244,7 @@ fn draw_scene(
         fps,
         width,
         height,
+        background,
     )?;
 
     if settled {
@@ -262,6 +269,7 @@ fn draw_scene_now(
     fps: u32,
     width: u32,
     height: u32,
+    background: Option<&image::RgbaImage>,
 ) -> Result<(), RenderError> {
     let ease_in = ease_in_out_cubic(t_in);
     let ease_out = ease_in_out_cubic(t_out);
@@ -315,7 +323,11 @@ fn draw_scene_now(
         }
 
         // Background is fully opaque, so a straight copy replaces the old clone.
-        copy_pixels(canvas, &assets.background);
+        // A video background is supplied per frame; otherwise it is the cached one.
+        match background {
+            Some(frame) => copy_pixels(canvas, frame),
+            None => copy_pixels(canvas, &assets.background),
+        }
 
         let y = match assets.fit {
             Fit::Centered => ((height - scaled_h) / 2) as i32,
@@ -398,13 +410,12 @@ static STATIC_SCENE: std::sync::LazyLock<Mutex<HashMap<String, image::RgbaImage>
 
 fn assets_key(project: &qc_core::Project, image_path: &Path, width: u32, height: u32) -> String {
     format!(
-        "{}|{}x{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}x{}|{}|{}|{}|{}|{}|{}",
         image_path.display(),
         width,
         height,
         project.background.kind,
         project.background.blur_sigma,
-        project.background.dim,
         project.layout.corner_radius,
         project.layout.shadow.blur,
         project.layout.shadow.dy,
@@ -526,17 +537,22 @@ fn fill_background(
             let yo = (nh.saturating_sub(height)) / 2;
             let cropped = image::imageops::crop_imm(&resized, xo, yo, width, height).to_image();
             let blurred = fast_blur(&cropped, project.background.blur_sigma as f32);
-            let dim = project.background.dim as f32;
             for (dst, srcpx) in canvas.pixels_mut().zip(blurred.pixels()) {
-                let r = (srcpx[0] as f32 * (1.0 - dim)) as u8;
-                let g = (srcpx[1] as f32 * (1.0 - dim)) as u8;
-                let b = (srcpx[2] as f32 * (1.0 - dim)) as u8;
-                *dst = image::Rgba([r, g, b, 255]);
+                *dst = image::Rgba([srcpx[0], srcpx[1], srcpx[2], 255]);
+            }
+        }
+        "video" => {
+            // The clip is decoded per frame by the exporter and handed to
+            // `render_frame_into`; this filler is only a placeholder for previews.
+            for px in canvas.pixels_mut() {
+                *px = image::Rgba([0, 0, 0, 255]);
             }
         }
         other => {
             return Err(RenderError::Project(CoreError::NotImplemented {
-                feature: format!("background kind {other:?} (supported: solid, blur_from_image)"),
+                feature: format!(
+                    "background kind {other:?} (supported: solid, blur_from_image, video)"
+                ),
             }));
         }
     }

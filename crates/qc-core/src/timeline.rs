@@ -58,6 +58,19 @@ pub struct Timeline {
     pub cues: Vec<AudioCue>,
 }
 
+impl Timeline {
+    /// Index of the scene visible at `sample`. A frame inside a transition belongs to
+    /// the earlier span, so the renderer and the background decoder agree.
+    pub fn scene_index(&self, sample: Samples) -> usize {
+        for (i, span) in self.scenes.iter().enumerate() {
+            if sample.0 >= span.start.0 && sample.0 < span.end.0 {
+                return i;
+            }
+        }
+        self.scenes.len().saturating_sub(1)
+    }
+}
+
 pub fn solve(project: &crate::Project, inputs: &[SceneInputs]) -> Result<Timeline, CoreError> {
     if inputs.len() != project.scenes.len() {
         return Err(CoreError::InvalidProject {

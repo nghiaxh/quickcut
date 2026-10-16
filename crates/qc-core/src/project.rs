@@ -16,10 +16,10 @@ fn d_height() -> u32 {
     1920
 }
 fn d_blur() -> f64 {
-    40.0
+    4.0
 }
-fn d_dim() -> f64 {
-    0.35
+fn d_seed() -> u64 {
+    0
 }
 fn d_margin() -> u32 {
     60
@@ -104,18 +104,26 @@ impl Default for OutputConfig {
 #[serde(default)]
 pub struct BackgroundConfig {
     pub kind: String,
+    /// One video, or a directory of clips to pick from when `kind = "video"`.
+    #[serde(default)]
+    pub file: Option<String>,
     #[serde(default = "d_blur")]
     pub blur_sigma: f64,
-    #[serde(default = "d_dim")]
-    pub dim: f64,
+    /// Seeds the clip-to-scene assignment so renders stay reproducible.
+    #[serde(default = "d_seed")]
+    pub seed: u64,
+    #[serde(default = "default_true")]
+    pub r#loop: bool,
 }
 
 impl Default for BackgroundConfig {
     fn default() -> Self {
         Self {
             kind: "blur_from_image".to_string(),
+            file: None,
             blur_sigma: d_blur(),
-            dim: d_dim(),
+            seed: d_seed(),
+            r#loop: true,
         }
     }
 }
@@ -367,6 +375,20 @@ impl Project {
                 reason: "at least one scene required".to_string(),
             });
         }
+        if self.background.kind == "video"
+            && self
+                .background
+                .file
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+        {
+            return Err(CoreError::InvalidProject {
+                field: "background.file".to_string(),
+                reason: "required when background.kind is video".to_string(),
+            });
+        }
         for (i, s) in self.scenes.iter().enumerate() {
             if s.image.trim().is_empty() {
                 return Err(CoreError::InvalidProject {
@@ -376,5 +398,99 @@ impl Project {
             }
         }
         Ok(())
+    }
+}
+
+/// Sorted pool of background clips. `file` is either one video or a directory of them.
+pub fn background_clips(
+    base: &Path,
+    background: &BackgroundConfig,
+) -> Result<Vec<std::path::PathBuf>, CoreError> {
+    let rel = background.file.as_deref().unwrap_or("");
+    if rel.trim().is_empty() {
+        return Err(CoreError::InvalidProject {
+            field: "background.file".to_string(),
+            reason: "missing".to_string(),
+        });
+    }
+    let path = base.join(rel);
+    if path.is_dir() {
+        let mut clips: Vec<std::path::PathBuf> = std::fs::read_dir(&path)?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| p.is_file() && is_video_ext(p))
+            .collect();
+        clips.sort();
+        if clips.is_empty() {
+            return Err(CoreError::MissingFile {
+                path: rel.to_string(),
+                reason: "no video clips in directory".to_string(),
+            });
+        }
+        Ok(clips)
+    } else if path.is_file() {
+        Ok(vec![path])
+    } else {
+        Err(CoreError::MissingFile {
+            path: rel.to_string(),
+            reason: "background video not found".to_string(),
+        })
+    }
+}
+
+fn is_video_ext(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("mp4" | "mov" | "webm" | "mkv")
+    )
+}
+
+/// One clip per scene: the pool shuffled deterministically by `seed`, wrapping when
+/// there are more scenes than clips. Depending only on `(seed, index)` keeps a
+/// `--range` render identical to the same stretch of a full render.
+pub fn assign_background_clips(pool_len: usize, scene_count: usize, seed: u64) -> Vec<usize> {
+    if pool_len == 0 {
+        return Vec::new();
+    }
+    let mut order: Vec<usize> = (0..pool_len).collect();
+    let mut state = seed;
+    for i in (1..pool_len).rev() {
+        let j = (splitmix64(&mut state) % (i as u64 + 1)) as usize;
+        order.swap(i, j);
+    }
+    (0..scene_count).map(|s| order[s % pool_len]).collect()
+}
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clip_assignment_is_stable_and_covers_the_pool_once() {
+        let a = assign_background_clips(4, 4, 7);
+        assert_eq!(a, assign_background_clips(4, 4, 7));
+        let mut sorted = a;
+        sorted.sort();
+        assert_eq!(sorted, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn clip_assignment_wraps_and_follows_the_seed() {
+        assert_eq!(assign_background_clips(2, 5, 0).len(), 5);
+        assert_eq!(assign_background_clips(0, 3, 0), Vec::<usize>::new());
+        assert_ne!(
+            assign_background_clips(4, 4, 1),
+            assign_background_clips(4, 4, 2)
+        );
     }
 }

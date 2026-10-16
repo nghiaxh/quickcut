@@ -67,7 +67,16 @@ impl DesktopApp {
             return;
         };
         let (w, h) = self.preview_size;
-        match qc_render::render_frame_rgba(project, base, timeline, self.preview_frame, 30, w, h) {
+        match qc_render::render_frame_rgba(
+            project,
+            base,
+            timeline,
+            self.preview_frame,
+            30,
+            w,
+            h,
+            None,
+        ) {
             Ok(rgba) => {
                 let image =
                     egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);

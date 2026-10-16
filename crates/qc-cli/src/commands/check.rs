@@ -13,6 +13,24 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         .with_context(|| format!("loading project from {}", args.target.display()))?;
     project.validate().context("invalid project.toml")?;
 
+    if project.background.kind == "video" {
+        let clips = qc_core::background_clips(&base, &project.background)
+            .context("resolving background video")?;
+        let assign = qc_core::assign_background_clips(
+            clips.len(),
+            project.scenes.len(),
+            project.background.seed,
+        );
+        println!("background video: {} clip(s)", clips.len());
+        for (scene, clip) in assign.iter().enumerate() {
+            let name = clips[*clip]
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?");
+            println!("  scene {} -> {name}", scene + 1);
+        }
+    }
+
     for scene in &project.scenes {
         let image_path = base.join(&scene.image);
         if !image_path.exists() {

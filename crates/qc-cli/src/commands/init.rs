@@ -10,6 +10,9 @@ pub struct Args {
     pub out: PathBuf,
     #[arg(long)]
     pub bgm: Option<PathBuf>,
+    /// One background video, or a directory of clips to pick from per scene.
+    #[arg(long)]
+    pub bg_video: Option<PathBuf>,
     #[arg(long)]
     pub force: bool,
 }
@@ -52,6 +55,11 @@ pub fn run(args: Args) -> anyhow::Result<()> {
             file: rel,
             ..qc_core::BgmConfig::default()
         });
+    }
+
+    if let Some(bg) = &args.bg_video {
+        project.background.kind = "video".to_string();
+        project.background.file = Some(util::posix(bg.strip_prefix(&base).unwrap_or(bg)));
     }
 
     let text = toml::to_string_pretty(&project).map_err(|e| CoreError::InvalidProject {
