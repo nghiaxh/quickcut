@@ -1,15 +1,15 @@
 # QuickCut repository
 
-Rust workspace implementing a CLI-first video renderer for "react thread post" projects.
+Rust workspace implementing a desktop-first video editor for "react thread post" projects. The desktop app is the product; the CLI is a secondary scripting and headless tool.
 
 ## Build and checks
 
-- Build CLI: `cargo build -p qc-cli` (release: `cargo build -p qc-cli --release`)
-- Run CLI during development: `cargo run -p qc-cli -- <COMMAND>`
+- Run the app: `cargo run` (desktop is the workspace default member)
+- Build the CLI: `cargo build -p qc-cli` (release: `cargo build -p qc-cli --release`); the binary is `quickcut-cli`
 - Format check: `cargo fmt --check`
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Tests: `cargo test --workspace`
-- `apps/desktop` is its own workspace: run cargo from inside it, root commands do not see it and CI lints it in a separate job
+- The desktop app is a normal workspace member under `apps/desktop`; root cargo commands and CI cover it
 - Rust edition 2021, toolchain pinned in `rust-toolchain.toml`. FFmpeg must be in `PATH` for `render`.
 
 ## Workspace boundaries
@@ -18,8 +18,8 @@ Rust workspace implementing a CLI-first video renderer for "react thread post" p
 - `qc-audio`: decode/resample/mix/duck WAV generation
 - `qc-render`: frame composition built on the `image` crate (not tiny-skia): animation, cross-fade, rounded corners, shadow. `render_frame_into` writes into a caller-owned buffer and uses per-thread scratch, so the frame loop allocates nothing. Scenes whose animation has settled are composited once and cached.
 - `qc-export`: FFmpeg pipe orchestration, owns the frame loop, reports progress through a callback, and renders frames in parallel rounds that reach ffmpeg in strict order
-- `qc-cli`: clap entrypoint and commands
-- `apps/desktop`: egui desktop app using the same crates
+- `qc-cli`: clap entrypoint and commands, packaged as the secondary `quickcut-cli` binary
+- `apps/desktop`: egui desktop app, packaged as `quickcut`, the primary product
 - Dependency direction: `cli, desktop -> export -> render,audio -> core`
 
 ## Error handling
@@ -37,10 +37,10 @@ Rust workspace implementing a CLI-first video renderer for "react thread post" p
 
 ## Commands
 
-- `quickcut init <DIR> [--out project.toml] [--bgm FILE] [--force]`
-- `quickcut check <PROJECT|DIR>`
-- `quickcut render <PROJECT|DIR> -o out.mp4 [--preset draft|final] [--fps N] [--size WxH] [--range A:B] [--threads N] [--ffmpeg PATH] [--no-audio-norm] [--keep-temp] [--json-progress]`
-- `quickcut probe <FILE>`
+- `quickcut-cli init <DIR> [--out project.toml] [--bgm FILE] [--force]`
+- `quickcut-cli check <PROJECT|DIR>`
+- `quickcut-cli render <PROJECT|DIR> -o out.mp4 [--preset draft|final] [--fps N] [--size WxH] [--range A:B] [--threads N] [--ffmpeg PATH] [--no-audio-norm] [--keep-temp] [--json-progress]`
+- `quickcut-cli probe <FILE>`
 - `-v` is global: default warn, `-v` info, `-vv` debug
 
 Exit codes: `0` success, `1` input error, `2` decode error, `3` FFmpeg error, `4` other.
